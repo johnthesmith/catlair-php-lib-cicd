@@ -1,13 +1,11 @@
 <?php
 /*
-    Модуль CICD
-    Включает:
-        - работа с GIT
-        - shell операции на локальном и удаленном хостах через ssh
-        - сборка docker
-        - обфурскация кода
-        - проверка корректности кода
-        - массовые подмены
+    CICD functionality module
+    Includes:
+        - working with GIT
+        - docker builds
+        - shell operations on local and remote hosts via SSH
+        - bulk replacements
 */
 
 
@@ -17,7 +15,7 @@ namespace catlair;
 
 
 /*
-    Локальные библиотеки
+    Local libraries
 */
 require_once LIB . '/core/shell.php';
 require_once LIB . '/core/utils.php';
@@ -27,27 +25,18 @@ require_once LIB . '/core/moment.php';
 
 
 /*
-    Класс деплоера
+    Cici class
 */
-class Cicd extends Payload
+class Cicd extends Hub
 {
     /*
         Modes
     */
-
-    /*
-        Режим сборки образа
-        выполняются только действия на локальном инстансе
-    */
-    const MODE_BUILD    = 'build';
-    /*
-        Режим тестирования
-        никаких действий не выполняется, только логирование
-    */
+    /* Testing mode тo actions are performed, only logging */
     const MODE_TEST     = 'test';
-    /*
-        Полная сборка и деплой образа на целевой инстанс
-    */
+    /* Build mode оnly actions on the local instance are performed */
+    const MODE_BUILD    = 'build';
+    /* Full build and deployment of the image to the target instance */
     const MODE_FULL     = 'full';
 
 
@@ -59,20 +48,19 @@ class Cicd extends Payload
             Set aliases
         */
 
-        /* Путь до общего списка фалов */
+        /* Path to the shared file list */
         'FILES'                 => '%SOURCE%/files',
         /* Путь до папки с шаблонами */
         'TEMPLATES'             => '%SOURCE%/templates',
 
         /*
-            Источники локальные
+            Local sources
         */
-
-        /* папка путей источников для создания контейнера */
+        /* folder with source paths for container creation */
         'SOURCE'                => '%TASK_PATH%/deploy/source',
-        /* источник для формирмирования корня */
+        /* source for root formation */
         'IMAGE'                 => '%SOURCE%/image',
-        /* Путь до списка фалов задачи */
+        /* path to the task files list */
         'FILES_TASK'            => '%SOURCE%/files',
         'SOURCE_PROJECT'        => '%SOURCE%/project',
 
@@ -176,6 +164,8 @@ class Cicd extends Payload
         string $aDest,
         /* Branch to clone */
         string $aBranch     = '',
+        /* Git ba*/
+        int $aDepth         = 1,
         /* Comment for logging during clone */
         string $aComment    = ''
     )
@@ -186,8 +176,8 @@ class Cicd extends Payload
             -> setComment( $aComment )
             -> cmdBegin()
             -> cmdAdd( 'git clone' )
-            -> cmdAdd( '--depth 1' )
             -> cmdAdd( empty( $aBranch ) ? '' : '-b ' . $aBranch )
+            -> cmdAdd( '--depth ' . $aDepth )
             -> cmdAdd( $aSource )
             -> fileAdd( $this -> prep( $aDest ) )
             -> cmdEnd( ' ', $this -> isTest() )
@@ -224,18 +214,20 @@ class Cicd extends Payload
 
     /*
         Clones a repository into the specified folder and removes git files
-        Uses GitClone and GitPurge
+        Uses gitClone and gitPurge
     */
     public function gitSync
     (
         /* Source repository URL to clone from */
-        string  $ASource,
+        string  $aSource,
         /* Destination file path for copying */
-        string  $ADestination,
+        string  $aDestination,
         /* List of exclusions */
-        array   $AExclude       = [],
+        array   $aExclude       = [],
         /* Optional branch to clone */
-        string  $ABranch        = ''
+        string  $aBranch        = '',
+        /* Depth of git history for cloning */
+        string  $aDepth        = 1
     )
     {
         /* Define temporary path */
@@ -243,7 +235,7 @@ class Cicd extends Payload
 
         return $this
         /* Clone the repository into the temporary folder */
-        -> gitClone( $this -> prep( $aSource ), $tmp, $aBranch )
+        -> gitClone( $this -> prep( $aSource ), $tmp, $aBranch, $aDepth )
         /* Remove git metadata files */
         -> gitPurge( $tmp, 'Remove git structure' )
         /* Копирование в локальную папку проекта */
@@ -264,9 +256,9 @@ class Cicd extends Payload
     */
     public function gitPull
     (
-        /* Файловый путь направление для пулинга */
+        /* Destination path for pulling */
         string $aDest,
-        /* Необязательный коментарий для логирования */
+        /* Optional comment for logging */
         string $aComment = ''
     )
     {
@@ -293,113 +285,128 @@ class Cicd extends Payload
 
 
 
+    /*
+        Git add command
+    */
     public function gitAdd
     (
-        /* Файловый путь источник пушинга */
-        string $ASource,
-        /* Необязательный коментарий для логирования */
-        string $AComment = ''
+        /* File path to the repository */
+        string $aSource,
+        /* Optional comment for logging */
+        string $aComment = ''
     )
     {
         if( $this -> isOk())
         {
-            $Source = $this -> prep( $ASource );
-            $CurrentPath = getcwd();
+            $source = $this -> prep( $aSource );
+            $currentPath = getcwd();
 
-            changeFolder( $Source );
+            changeFolder( $source );
 
             Shell::create( $this -> getLog() )
-            -> setComment( $AComment )
+            -> setComment( $aComment )
             -> cmdBegin()
             -> cmdAdd( 'git add -A' )
             -> cmdEnd( ' ', $this -> isTest() )
             -> resultTo( $this );
 
-            chdir( $CurrentPath );
+            chdir( $currentPath );
         }
         return $this;
     }
 
 
-
+    /*
+        Git commit
+    */
     public function gitCommit
     (
-        /* Файловый путь источник пушинга */
-        string $ASource,
-        /* Необязательный коментарий для логирования */
-        string $AComment = ''
+        /* File path source for pushing */
+        string $aSource,
+        /* Comment for commit */
+        string $aCommitComment = 'autocommit',
+        /* Optional comment for logging */
+        string $aComment = ''
     )
     {
         if( $this -> isOk())
         {
-            $Source = $this -> prep( $ASource );
-            $CurrentPath = getcwd();
+            $source = $this -> prep( $aSource );
+            $currentPath = getcwd();
 
             changeFolder( $Source );
 
             Shell::create( $this -> getLog() )
-            -> setComment( $AComment )
+            -> setComment( $aComment )
             -> cmdBegin()
-            -> cmdAdd( 'git commit -m ' . '"autocommit"' )
+            -> cmdAdd( 'git commit -m ' . '"' . $aCommitComment . '"' )
             -> cmdEnd( ' ', $this -> isTest() )
-//            -> resultTo( $this )
+            -> resultTo( $this )
             ;
 
-            chdir( $CurrentPath );
+            chdir( $currentPath );
         }
         return $this;
     }
 
 
 
+    /*
+        Performs a push to the current branch of the repository
+    */
     public function gitPush
     (
-        /* Файловый путь источник пушинга */
-        string $ASource,
-        /* Необязательный коментарий для логирования */
-        string $AComment = ''
+        /* File path source for pushing */
+        string $aSource,
+        /* Optional comment for logging */
+        string $aComment = ''
     )
     {
         if( $this -> isOk())
         {
-            $Source = $this -> prep( $ASource );
-            $CurrentPath = getcwd();
+            $source = $this -> prep( $aSource );
+            $currentPath = getcwd();
 
-            changeFolder( $Source );
+            changeFolder( $source );
 
             Shell::create( $this -> getLog() )
-            -> setComment( $AComment )
+            -> setComment( $aComment )
             -> cmdBegin()
             -> cmdAdd( 'git push' )
             -> cmdEnd( ' ', $this -> isTest() )
             -> resultTo( $this );
 
-            chdir( $CurrentPath );
+            chdir( $currentPath );
         }
         return $this;
     }
 
 
 
+    /*
+        Clones the repository or pulls if it already exists
+    */
     public function gitCloneOrPull
     (
-        /* Репозиторий источник для клонирования */
-        string $ASource,
-        /* Файловый путь направление для клонирования */
-        string $ADest,
-        /* Необязательная ветка для клонирования */
-        string $ABranch     = '',
-        /* Необязательный коментарий при клонировании для лога */
-        string $AComment    = ''
+        /* Repository source for cloning */
+        string $aSource,
+        /* Destination path for cloning */
+        string $aDest,
+        /* Optional branch for cloning */
+        string $aBranch     = '',
+        /* Optional comment for cloning log */
+        string $aComment    = '',
+        /* Git history depth */
+        string $aDepth = 1
     )
     {
-        if( file_exists( $this -> prep( $ADest . '/.git' )))
+        if( file_exists( $this -> prep( $aDest . '/.git' )))
         {
-            $this -> gitPull( $ADest, $AComment);
+            $this -> gitPull( $aDest, $aComment);
         }
         else
         {
-            $this -> gitClone( $ASource, $ADest, $ABranch, $AComment);
+            $this -> gitClone( $aSource, $aDest, $aBranch, $aDepth, $aComment);
         }
         return $this;
     }
@@ -407,32 +414,37 @@ class Cicd extends Payload
 
 
     /**************************************************************************
-        Работа с FS
+        File system work
     */
 
+
+    /*
+        Change current folder
+    */
     public function changeFolder
     (
-        string $AFolder = '%BUILD%'
+        /* Path */
+        string $aFolder = '%BUILD%'
     )
     {
-        if ( $this -> isOk() )
+        if( $this -> isOk() )
         {
-            $Folder = $this -> prep( $AFolder );
+            $folder = $this -> prep( $aFolder );
             $this
             -> getLog()
             -> trace( 'Change folder' )
-            -> param( 'Folder', $Folder );
+            -> param( 'Folder', $folder );
 
-            if( file_exists( $Folder ) && is_dir( $Folder ))
+            if( file_exists( $folder ) && is_dir( $folder ))
             {
-                chdir( $Folder );
+                chdir( $folder );
             }
             else
             {
                 $this -> setResult
                 (
-                    'FolderNotExists',
-                    [ 'Folder' => $Folder ]
+                    'folder-not-exists',
+                    [ 'Folder' => $folder ]
                 );
             }
         }
@@ -447,7 +459,7 @@ class Cicd extends Payload
     public function rights
     (
         /* Список путей для раздачи прав */
-        array   $APathes        = [],
+        array   $aPathes        = [],
         /* Права на папки */
         string  $ARights        = '0700',
         /* Рекурсивная обработка */
@@ -491,78 +503,78 @@ class Cicd extends Payload
 
 
     /*
-        Рекурсивное копирование файлов
+        Recursive file copying
     */
     public function sync
     (
-        /* файловый путь источник копирвоания */
-        string  $ASource,
-        /* файловый путь направление копирвоания */
-        string  $ADestination,
-        /* массив строковых масок исключений  при копировании*/
-        array   $AExcludes      = [],
-        /* допускается удаление файлов в направлении не содержащихся в источнике */
-        bool    $ADelete        = false,
-        /* коментарий для вывода при исполнении команды */
-        string  $AComment       = '',
-        /* запуск в режиме тестирования */
-        bool    $AIsTest        = true
+        /* file path source for copying */
+        string $aSource,
+        /* file path destination for copying */
+        string $aDestination,
+        /* array of string masks to exclude during copying */
+        array $aExcludes = [],
+        /* allow deletion of files in destination that are not present in source */
+        bool $aDelete = false,
+        /* comment for output during command execution */
+        string $aComment = '',
+        /* run in test mode */
+        bool $aIsTest = true
     )
     {
         if( $this -> isOk() )
         {
-            $this -> GetLog() -> Begin( 'Syncronize' ) -> Text( ' ' . $AComment );
+            $this -> GetLog() -> Begin( 'Syncronize' ) -> Text( ' ' . $aComment );
 
             /* Конверсия путей в полные */
-            $Source = $this -> Prep( $ASource );
-            $Source = $Source . ( is_dir( $Source ) ? '/' : '' );
-            $Destination = $this -> Prep( $ADestination );
+            $source = $this -> Prep( $aSource );
+            $source = $Source . ( is_dir( $source ) ? '/' : '' );
+            $destination = $this -> Prep( $aDestination );
 
             $this -> GetLog()
-            -> Trace() -> Param( 'Source', $Source )
-            -> Trace() -> Param( 'Destination', $Destination );
+            -> Trace() -> Param( 'Source', $source )
+            -> Trace() -> Param( 'Destination', $destination );
 
             /* Проверка существования источника */
-            if( ! $this -> IsTest() )
+            if( ! $this -> isTest() )
             {
-                $this -> checkPath( $ADestination );
+                $this -> checkPath( $aDestination );
             }
 
             if( $this -> isOk() )
             {
-                $Shell = Shell::Create( $this -> GetLog() );
+                $shell = Shell::create( $this -> getLog() );
 
-                $Shell
-                -> CmdBegin()
-                -> CmdAdd( 'rsync' )
-                -> CmdAdd( '-rzaog' );
+                $shell
+                -> cmdBegin()
+                -> cmdAdd( 'rsync' )
+                -> cmdAdd( '-azog' );
 
                 /* Добавление исключений для синхронизации */
-                if( !empty( $AExcludes ))
+                if( !empty( $aExcludes ))
                 {
-                    foreach( $AExcludes as $Exclude )
+                    foreach( $aExcludes as $exclude )
                     {
-                        $Shell -> CmdAdd
+                        $shell -> CmdAdd
                         (
                             '--exclude "' .
-                            $this -> Prep( $Exclude ) .
+                            $this -> prep( $exclude ) .
                             '" '
                         );
                     }
                 }
 
-                if( $ADelete )
+                if( $aDelete )
                 {
-                    $Shell -> CmdAdd( '--delete' );
+                    $shell -> cmdAdd( '--delete' );
                 }
 
                 $Shell
-                -> FileAdd( $Source )
-                -> FileAdd( $Destination )
-                -> CmdEnd( ' ', $AIsTest )
-                -> ResultTo( $this );
+                -> fileAdd( $source )
+                -> fileAdd( $destination )
+                -> cmdEnd( ' ', $aIsTest )
+                -> resultTo( $this );
             }
-            $this -> GetLog() -> End();
+            $this -> getLog() -> end();
         }
         return $this;
     }
@@ -574,18 +586,18 @@ class Cicd extends Payload
     */
     public function delete
     (
-        string $APath,
-        string $AComment = ''
+        string $aPath,
+        string $aComment = ''
     )
     {
         if( $this -> isOk())
         {
-            Shell::Create( $this -> getLog() )
-            -> setComment( $AComment )
+            Shell::create( $this -> getLog() )
+            -> setComment( $aComment )
             -> cmdBegin()
             -> cmdAdd( 'rm' )
             -> cmdAdd( '-rf' )
-            -> fileAdd( $this -> prep( $APath ) )
+            -> fileAdd( $this -> prep( $aPath ) )
             -> cmdEnd( ' ', $this -> isTest() )
             -> resultTo( $this );
         }
@@ -596,23 +608,23 @@ class Cicd extends Payload
 
 
     /*
-        Перемещение папки
+        Move folder
     */
     public function move
     (
-        string $ASource,
-        string $ADest,
-        string $AComment = ''
+        string $aSource,
+        string $aDest,
+        string $aComment = ''
     )
     {
         if( $this -> isOk())
         {
-            Shell::Create( $this -> getLog() )
-            -> setComment( $AComment )
+            Shell::create( $this -> getLog() )
+            -> setComment( $aComment )
             -> cmdBegin()
             -> cmdAdd( 'mv' )
-            -> fileAdd( $this -> prep( $ASource ) )
-            -> fileAdd( $this -> prep( $ADest ) )
+            -> fileAdd( $this -> prep( $aSource ) )
+            -> fileAdd( $this -> prep( $aDest ) )
             -> cmdEnd( ' ', $this -> isTest() )
             -> resultTo( $this );
         }
@@ -622,23 +634,23 @@ class Cicd extends Payload
 
 
     /*
-        Копирование папки
+        Copy folder
     */
     public function copy
     (
-        string $ASource,
-        string $ADest,
-        string $AComment = ''
+        string $aSource,
+        string $aDest,
+        string $aComment = ''
     )
     {
         if( $this -> isOk())
         {
-            Shell::Create( $this -> getLog() )
-            -> setComment( $AComment )
+            Shell::create( $this -> getLog() )
+            -> setComment( $aComment )
             -> cmdBegin()
             -> cmdAdd( 'cp -aT' )
-            -> fileAdd( $this -> prep( $ASource ) )
-            -> fileAdd( $this -> prep( $ADest ) )
+            -> fileAdd( $this -> prep( $aSource ) )
+            -> fileAdd( $this -> prep( $aDest ) )
             -> cmdEnd( ' ', $this -> isTest() )
             -> resultTo( $this );
         }
@@ -648,26 +660,28 @@ class Cicd extends Payload
 
 
     /*
-        Рекурсивное создание фаловых путей
+        Recursive creation of file paths
     */
     public function checkPath
     (
-        /* файловый путь для создания */
+        /* File path to create */
         string $APath
     )
     {
         if( $this -> isOk())
         {
-            $Path = $this -> prep( $APath );
-            $Cmd = $this -> parseCLI( $Path );
+            /* Prepare path */
+            $path = $this -> prep( $aPath );
+            //
+            $cmd = $this -> parseCLI( $path );
 
             if( $Cmd[ 'Remote' ])
             {
                 /*
-                    Исполнение кода создания папки на удаленном хосте без
-                    проверки результата
+                    Executes folder creation on a remote host
+                    without checking the result
                 */
-                Shell::Create( $this -> getLog() )
+                Shell::create( $this -> getLog() )
                 -> setConnection( $Cmd[ 'Connection' ] )
                 -> setPrivateKeyPath( $this -> getParam( 'REMOTE_SSL_KEY' ))
                 -> cmd( 'mkdir -p ' . $Cmd[ 'Path' ], ! $this -> IsFull() )
@@ -676,8 +690,8 @@ class Cicd extends Payload
             else
             {
                 /*
-                    Проверка наличия папки на локальном хосте и создание при
-                    отсутсвии
+                    Checks for folder existence on the local host
+                    and creates it if missing
                 */
                 if
                 (
@@ -699,13 +713,14 @@ class Cicd extends Payload
 
 
     /*
-        Разбор CLI строки на компоненты
-        Результатом разбора является массив
-            bool    Remote - признак, есть ли в строке логин и хост для удаленного подключения
-            string  Connection - при наличии login@host
-            string  Login - логин для подключения
-            string  Host - узел для подключения
-            string  Path - путь (возвращается всегда)
+        Parses a CLI string into components.
+        The result is an array containing:
+            bool Remote - flag indicating if the string contains login and host
+                          for remote connection
+            string  Connection - the login@host part if present
+            string  Login - login for connection
+            string  Host - host node for connection
+            string  Path - path (always returned)
     */
     private function parseCLI
     (
@@ -739,12 +754,12 @@ class Cicd extends Payload
 
 
     /**************************************************************************
-        Docker контейнеры
+        Docker containers
     */
 
     /*
-        Авторризация в docker
-        При авторизации используется брелок activateFob
+        Docker login
+        Uses a keychain activateFob during login
     */
     public function dockerLogin()
     {
@@ -768,7 +783,7 @@ class Cicd extends Payload
 
 
     /*
-        Сборка контейнера
+        Build conatinr
     */
     public function dockerImageBuild()
     {
@@ -781,7 +796,7 @@ class Cicd extends Payload
             ;
 
             /* Building container */
-            $Shell = Shell::Create( $this -> GetLog() )
+            $Shell = Shell::create( $this -> GetLog() )
             -> setComment( 'Build the docker image' )
             -> cmdBegin()
             -> cmdAdd( 'cd "' . $this -> Prep( '%BUILD%' ) . '";' )
@@ -819,27 +834,28 @@ class Cicd extends Payload
 
 
     /*
-        Удаление Docker образа по имени в формате ImageName:Version
-        Если имя не указано, удаляется текущий актуальный образ
+        Delete a Docker image by name in the format ImageName:Version.
+        If no name is provided, the current active image is deleted.
     */
     public function dockerImageDelete
     (
-        string $AImage = '' /* Наименование образа в формате Name:Version */
+        /* Image name in the format Name:Version */
+        string $aImage = ''
     )
     {
         if( $this -> isOk() )
         {
-            if( empty( $AIDImage ))
+            if( empty( $aImage ))
             {
-                $AImage =  $this -> getImageBuild();
+                $aImage =  $this -> getImageBuild();
             }
 
-            /* Выполнение удаления образа через shell */
-            Shell::Create( $this -> getLog() )
+            /* Executing image removal via shell */
+            Shell::create( $this -> getLog() )
             -> SetComment( 'Delete docker image' )
             -> Cmd
             (
-                'docker rmi -f ' . $AImage,
+                'docker rmi -f ' . $aImage,
                 $this -> isTest()
             )
             -> resultTo( $this );
@@ -850,27 +866,30 @@ class Cicd extends Payload
 
 
     /*
-        Экспорт докера в указанную папку
+        Exporting Docker to the specified folder
     */
     public function dockerImageExport
     (
-        string  $AFolder    = '%IMAGES%',
-        bool    $ALatest    = false
+        string  $aFolder    = '%IMAGES%',
+        bool    $aLatest    = false
     )
     {
         if( $this -> isOk() )
         {
-            $AFolder = empty( $AFolder ) ? '%IMAGES%' : $AFolder;
-            $File = $this -> prep( $AFolder ) . '/' . $this -> getImageFile( 0, $ALatest );
+            $aFolder = empty( $aFolder ) ? '%IMAGES%' : $aFolder;
 
-            if( clCheckPath( dirname( $File )))
+            $file = $this -> prep( $aFolder ) .
+            '/' .
+            $this -> getImageFile( 0, $aLatest );
+
+            if( clCheckPath( dirname( $file )))
             {
                 /* Export */
                 Shell::create( $this -> getLog() )
                 -> setComment( 'Export docker image' )
                 -> cmd
                 (
-                    'docker save -o ' . $File . ' ' . $this -> getImageBuild(),
+                    'docker save -o ' . $file . ' ' . $this -> getImageBuild(),
                     $this -> isTest()
                 )
                 -> resultTo( $this );
@@ -882,31 +901,39 @@ class Cicd extends Payload
 
 
     /*
-        Сборка команды для запуска контейнера
+        Constructing the command to run the container
     */
     public function imageRunCmd()
     {
-            return
-            $this -> prep
+        return
+        $this -> prep
+        (
+            'docker run -itd --rm' .
+            $this -> keyBeforeValue
             (
-                'docker run -itd --rm' .
-                $this -> keyBeforeValue( ' -p ', $this -> getParam( 'ContainerPorts', [] )) . ' ' .
+                ' -p ',
+                $this -> getParam( 'ContainerPorts', [] )) . ' ' .
+            (
                 (
-                    (
-                        !empty( $this -> getParam( 'HostFolder', [] )) &&
-                        !empty( $this -> getParam( 'DockerFolder', [] ))
-                    )
-                    ?
-                    (
-                        ' -v "' . $this -> prep( $this -> getParam( 'HostFolder' )) . '"' .
-                        ':' .
-                        '"' . $this -> prep( $this -> getParam( 'DockerFolder' )) . '"'
-                    )
-                    :''
-                ) . ' ' .
-                $this -> keyBeforeValue( ' --cap-add ', $this -> getParam( 'RemoteCapabilities', [] )) . ' ' .
-                $this -> getImageBuild()
-            );
+                    !empty( $this -> getParam( 'HostFolder', [] )) &&
+                    !empty( $this -> getParam( 'DockerFolder', [] ))
+                )
+                ?
+                (
+                    ' -v "' . $this -> prep( $this -> getParam( 'HostFolder' )) . '"' .
+                    ':' .
+                    '"' . $this -> prep( $this -> getParam( 'DockerFolder' )) . '"'
+                )
+                :''
+            ) . ' ' .
+            $this -> keyBeforeValue
+            (
+                ' --cap-add ',
+                $this -> getParam( 'RemoteCapabilities', [] )
+            ) .
+            ' ' .
+            $this -> getImageBuild()
+        );
     }
 
 
@@ -919,7 +946,13 @@ class Cicd extends Payload
     {
         if( $this -> isOk() )
         {
-            $this -> getLog() -> prn( $this -> imageRunCmd(), 'Docker run line' );
+            $this
+            -> getLog()
+            -> prn
+            (
+                $this -> imageRunCmd(),
+                'Docker run line'
+            );
         }
         return $this;
     }
@@ -927,7 +960,8 @@ class Cicd extends Payload
 
 
     /*
-        Деплой docker контейнера на удаленный хост в соответсвии с настройкамми
+        Deployment of a Docker container to a remote host according to the
+        settings
     */
     public function imageDeploy
     (
@@ -939,9 +973,13 @@ class Cicd extends Payload
 
             $this
             /* Установка текущей версии образа */
-            -> setParam( 'IMAGE_FILE_CURRENT', $this -> GetImageFile() )
+            -> setParam
+            (
+                'IMAGE_FILE_CURRENT',
+                $this -> GetImageFile()
+            )
 
-            /* Перемещение файла образа на целевом инстансе */
+            /* Перемещение файла образа на целевой инстанс */
             -> sync
             (
                 $this -> prep( '%IMAGES%/%IMAGE_FILE_CURRENT%' ),
@@ -955,7 +993,10 @@ class Cicd extends Payload
             /* Создание образа из файла на целевом инстансе */
             -> shell
             (
-                [ 'docker load --input "%REMOTE_IMAGES%/%IMAGE_FILE_CURRENT%"' ],
+                [
+                    'docker load ' .
+                    '--input "%REMOTE_IMAGES%/%IMAGE_FILE_CURRENT%"'
+                ],
                 true,
                 'Import the container on remote system'
             )
@@ -987,7 +1028,11 @@ class Cicd extends Payload
 
             $FileRunContainer = $this -> prep( '%DEST%/container_run.sh' );
             file_put_contents( $FileRunContainer, $RunCommand );
-            $this -> getLog() -> info( 'Docker image run command saved to file' ) -> param( 'File', $FileRunContainer );
+
+            $this
+            -> getLog()
+            -> info( 'Docker image run command saved to file' )
+            -> param( 'File', $FileRunContainer );
         }
         return $this;
     }
@@ -995,12 +1040,14 @@ class Cicd extends Payload
 
 
     /*
-        Удаление образов младше указанной версии от текущей
+        Deletion of images older than the specified version from the current one
     */
     public function imagePurge
     (
-        int $ADepth = 5,        /* Глубина версий на удаление */
-        bool $ARemote = false   /* Выполнение на целевом инстансе */
+        /* Глубина версий на удаление */
+        int $ADepth = 5,
+        /* Выполнение на целевом инстансе */
+        bool $ARemote = false
     )
     {
         if( $this -> isOk() )
@@ -1011,7 +1058,7 @@ class Cicd extends Payload
 
             /* Сборка перечня имеющихся версий с целевого инстанса */
             $Result =
-            Shell::Create( $this -> getLog() )
+            Shell::create( $this -> getLog() )
             -> setConnection( $ARemote ? $this -> prep( '%REMOTE%' ) : '' )
             -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'REMOTE_SSL_KEY' ) : '' )
             -> cmd( 'docker images ' . $ImageName, $this -> isTest() )
@@ -1032,7 +1079,7 @@ class Cicd extends Payload
                     )
                     {
                         $ImageForDelete = $this -> getImageName( $Version );
-                        Shell::Create( $this -> getLog())
+                        Shell::create( $this -> getLog())
                         -> setConnection( $ARemote ? $this -> prep( '%REMOTE%' ) : '' )
                         -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'REMOTE_SSL_KEY' ) : '' )
                         -> setComment( 'Purge image on remote host' )
@@ -1047,7 +1094,7 @@ class Cicd extends Payload
 
 
     /*
-        Установка тэга для образа для заливки в приватный репозиторий
+        Setting a tag for the image to be pushed to a private repository
     */
     public function imageTag
     (
@@ -1086,7 +1133,7 @@ class Cicd extends Payload
 
 
     /*
-        Публикация текущего контейнера во внешнем ресурсе
+        Publishing the current container to an external resource
     */
     public function imagePublic
     (
@@ -1095,7 +1142,7 @@ class Cicd extends Payload
     {
         if( $this -> isOk() )
         {
-            Shell::Create( $this -> getLog() )
+            Shell::create( $this -> getLog() )
 
             /* Publication */
             -> Cmd
@@ -1120,9 +1167,10 @@ class Cicd extends Payload
 
 
 
+
     /*
-        Создание тома docker
-        docker volume create —-name my_volume
+        Creating a Docker volume
+        docker volume create --name my_volume
     */
     public function volumeCreate
     (
@@ -1135,7 +1183,7 @@ class Cicd extends Payload
 
 
     /*
-        Проверка сущестования тома по имены
+        Checking if a volume exists by name
         docker volume ls
     */
     public function volumeExists
@@ -1149,7 +1197,7 @@ class Cicd extends Payload
 
 
     /*
-        Возвращает перечень томов
+        Returns a list of volumes
         docker volume ls
     */
     public function volumeList()
@@ -1160,7 +1208,7 @@ class Cicd extends Payload
 
 
     /*
-        У тома по имены
+        Remove volume by name
         docker volume rm my_volume
     */
     public function volumeDelete
@@ -1178,43 +1226,44 @@ class Cicd extends Payload
     */
 
     /*
-        Возвращает имя образа с учетом версии
+        Returns image name with version
         ImageName:Version
     */
     public function getImageBuild
     (
-        int $AShift = 0 /* Версия */
+        /* Version shift 0 - for current version */
+        int $aShift = 0
     )
     {
         return
         $this -> getParam( 'ImageName' ) .
         ':' .
-        $this -> versionToString( $AShift );
+        $this -> versionToString( $aShift );
     }
 
 
 
     /*
-        Возвращает имя образа из переданной версии
+        Returns the image name for the given version
         ImageName:Version
     */
     public function getImageName
     (
-        array $AVersion = []
+        array $aVersion = []
     )
     {
         return
         $this -> getParam( 'ImageName' ) .
         ':' .
-        clValueFromObject( $AVersion, 'Version', 'alpha' ) .
+        clValueFromObject( $aVersion, 'Version', 'alpha' ) .
         '.' .
-        clValueFromObject( $AVersion, 'Build', 0 );
+        clValueFromObject( $aVersion, 'Build', 0 );
     }
 
 
 
     /*
-        Возвращает имя образа с последней версией
+        Returns the image name with the latest version
         ImageName:latest
     */
     public function getImageLatest()
@@ -1225,7 +1274,7 @@ class Cicd extends Payload
 
 
     /*
-        Возвращает имя файла версии для задачи
+        Returns the filename for the version of the task
     */
     public function getVersionFile()
     {
@@ -1235,8 +1284,8 @@ class Cicd extends Payload
 
 
     /*
-        Чтение текущей версии
-        Результат возвращается в именованном массиве
+        Reading the current version
+        The result is returned as an associative array
         [
             'Version',
             'Build'
@@ -1273,7 +1322,7 @@ class Cicd extends Payload
 
 
     /*
-        Запись версионного файла
+        Writing the version file
     */
     public function versionWrite
     (
@@ -1292,11 +1341,11 @@ class Cicd extends Payload
 
 
     /*
-        Представление версии как строки
+        Representing the version as a string
     */
     public function versionToString
     (
-        /* Сдвиг версии билда на указанный номер*/
+        /* Increment build version by the specified number */
         int     $AShift = 0
     )
     {
@@ -1308,7 +1357,7 @@ class Cicd extends Payload
 
 
     /*
-        Конвертация строки в версию
+        Conversion of a string to a version
     */
     public function stringToVersion
     (
@@ -1326,9 +1375,8 @@ class Cicd extends Payload
     }
 
 
-
     /*
-        Увеличение номера версии на единицу в файле
+        Incrementing the version number by one in the file
     */
     public function versionInc()
     {
@@ -1341,7 +1389,7 @@ class Cicd extends Payload
 
 
     /*
-        Возвращает имя файла с указанной версией
+        Returns the filename with the specified version
     */
     public function getImageFile
     (
@@ -1364,24 +1412,23 @@ class Cicd extends Payload
 
 
     /*************************************************************************
-        Директивы
+        Utils
     */
 
-
     /*
-        Выполняет подмену макроподстановок в строке. возвращается результат для
-        которого все значения замененены Параметры заменяются с использованием
-        открывающих изакрывающих ключей. Чувствительно к регистру
+        Performs macro substitution in the string. Returns the result where
+        all values are replaced. Parameters are substituted using the given
+        opening and closing keys. Case-sensitive.
     */
     public function prep
     (
-        /* Значение для макроподстановок */
+        /* Value for macro substitutions */
         $ASource,
-        /* Список игнорируемых ключеней, которые остаются в незменном виде */
+        /* List of keys to exclude from substitution, left unchanged */
         array $AExclude = [],
-        /* Открывающий ключ макроподстановки. Только 1 символ */
+        /* Opening macro key. Only 1 character */
         string $ABegin  = '%',
-        /* Закрывающий ключ макроподстановки. Только 1 символ */
+        /* Closing macro key. Only 1 character */
         string $AEnd    = '%'
     )
     {
@@ -1398,50 +1445,50 @@ class Cicd extends Payload
 
 
     /*
-        Рекурсивная подмена значений для файлового пути
-        Содержимое файлов читается, производится замена, файл сохраняется
+        Recursive replacement of values in files.
+        The file contents are read, replacements are made, and the file is saved.
     */
     public function replace
     (
-        /* Файловый путь для исполнения подмены */
+        /* File path for performing replacements */
         string $APath,
         /*
-            Массив строк файловых масок при соответсвии которым выполнятся
-            подмены значений
+            Array of file mask strings; replacements are performed on files
+            matching these masks
         */
-        array $AIncludes    = null,
+        array $AIncludes = null,
         /*
-            Массив строк файловых масок при соответсвии которым выполнятся
-            подмены значений
+            Array of file mask strings; files matching these masks are excluded
+            from replacements
         */
-        array $AExcludes    = null,
-        /* Исключение ключей по именам */
+        array $AExcludes = null,
+        /* Keys to exclude by name */
         array $AExcludeKeys = null
     )
     {
         if( $this -> isOk() )
         {
-            /* Заполнение массивов включения исключения */
+            /* Filling inclusion and exclusion arrays */
             if( empty( $AIncludes ))    $AIncludes = [];
             if( empty( $AExcludes ))    $AExcludes = [];
             if( empty( $AExcludeKeys )) $AExcludeKeys = [];
 
-            /* Подготовка параметров включаемых файлов */
+            /* Preparing parameters of included files */
             foreach( $AIncludes as &$Item )
             {
                 $Item = $this -> prep( $Item );
             }
 
-            /* Подготовка параметров исключаемых файлов*/
+            /* Preparing parameters of excluded files */
             foreach( $AExcludes as &$Item )
             {
                 $Item = $this -> prep( $Item );
             }
 
-            /* Подгтовка пути */
+            /* Path preparation */
             $Path = $this -> prep( $APath );
 
-            /* Получение списка занчений */
+            /* Getting the list of values */
             $Values = $this -> getParams();
 
             $this -> getLog()
@@ -1487,7 +1534,8 @@ class Cicd extends Payload
                         $Source = file_get_contents( $AFile );
 
                         /* Выполненеи подмен */
-                        $Result = $this -> prep( $Source, $AExcludeKeys, '%', '%' );
+                        $Result = $this
+                        -> prep( $Source, $AExcludeKeys, '%', '%' );
 
                         /* Проверка результата */
                         $MD5Source = md5( $Source );
@@ -1502,20 +1550,31 @@ class Cicd extends Payload
                         else
                         {
                             /* Подмена произведена */
-                            $this -> GetLog() -> Text( '[r]', Console::ESC_INK_LIME );
+                            $this
+                            -> GetLog()
+                            -> Text( '[r]', Console::ESC_INK_LIME );
+
                             $Replace++;
                             /* Сохранение результатов */
                             if( file_put_contents( $AFile, $Result ) === false )
                             {
-                                /* Сообщение об ошибке в случае несохранения файла */
-                                $this -> getLog() -> Text( '[X]', Log::COLOR_ERROR );
+                                /*
+                                    Сообщение об ошибке в случае несохранения
+                                    файла
+                                */
+                                $this
+                                -> getLog()
+                                -> Text( '[X]', Log::COLOR_ERROR );
                                 $Error++;
                             }
                         }
                     }
                     else
                     {
-                        /* Сообщение в лог при пропуске файла на основании включающих исключающих масок */
+                        /*
+                            Log message when skipping a file based on
+                            include/exclude masks
+                        */
                         $this -> getLog() -> text( '[s]',  Log::COLOR_INFO );
                         $Skip++;
                     }
@@ -1525,7 +1584,8 @@ class Cicd extends Payload
 
             if( ( $Error ) > 0 )
             {
-                $this -> setResult( 'ErrorReplaceInFile', [ 'Count' => $Error ] );
+                $this
+                -> setResult( 'ErrorReplaceInFile', [ 'Count' => $Error ] );
             }
 
             $this -> GetLog()
@@ -1542,217 +1602,65 @@ class Cicd extends Payload
 
 
     /*
-        Рекурсивная проверка корректности исходного кода
-    */
-    public function correctness
-    (
-        /* Файловый путь для начала проверки коректности */
-        string $AStartPath,
-        /*
-            Включающий массив файловых масок, при соответсвии которым выполнятся
-            проверка корректности
-        */
-        array $AIncludes    = null,
-        /*
-            Исключающий массив файловых масок, при соответсвии которым не
-            выполнятся проверка корректности
-        */
-        array $AExcludes    = null,
-        bool $ACache        = true
-    )
-    {
-        if( $this -> isOk() )
-        {
-            /* Статистика */
-            $Errors     = [];
-            $Skiped     = 0;
-            $Error      = 0;
-            $NoChanges  = 0;
-            $Passed     = 0;
-
-            /* Заполнение массивов включения исключения */
-            if( empty( $AIncludes ))    $AIncludes = [];
-            if( empty( $AExcludes ))    $AExcludes = [];
-
-            /* Подготовка параметров включаемых файлов */
-            foreach( $AIncludes as &$Item )
-            {
-                $Item = $this -> prep( $Item );
-            }
-
-            /* Подготовка параметров исключаемых файлов*/
-            foreach( $AExcludes as &$Item )
-            {
-                $Item = $this -> prep( $Item );
-            }
-
-            /* Подгтовка пути источника */
-            $Path = $this -> prep( $AStartPath );
-
-            /* Подготовка пути */
-            $StablePath = $this -> prep( '%CACHE_STABLE%' );
-
-            $this -> getLog()
-            -> begin( 'Correctness' )
-            -> param( 'Path' , $Path );
-
-            /* Рекурсивное сканирование фалов */
-            clFileScan
-            (
-                $Path,
-                /* Нет обратного вызова для папок */
-                null,
-                /* Обратный вызов для файлов */
-                function( $AFile, $APath )
-                use
-                (
-                    $StablePath,
-                    $AIncludes,
-                    $AExcludes,
-                    $ACache,
-                    $Path,
-                    &$Errors,
-                    &$Skiped,
-                    &$Error,
-                    &$NoChanges,
-                    &$Passed
-                )
-                {
-                    $this -> getLog() -> trace();
-
-                    /* Получаем расширение */
-                    $Ext = strtolower( pathinfo( $AFile, PATHINFO_EXTENSION ));
-
-                    /* Проверка соответсвия имени файла условиям включающих и исключающих масок*/
-                    if
-                    (
-                        clFileMatch( $AFile, $AIncludes, $AExcludes ) &&
-                        ( $Ext == 'md' || $Ext == 'php' )
-                    )
-                    {
-                        /* Загрузка файла */
-                        $OriginalSource = file_get_contents( $AFile );
-                        $Source = $OriginalSource;
-
-                        /* Расчет md5 кэша */
-                        $MD5Source = md5( $Source );
-
-                        /* Файл для хранения кэша */
-                        $CacheFile = $this -> prep( '%CACHE_STABLE%' ) . clScatterName( md5( $AFile ) );
-                        $this -> checkPath( dirname( $CacheFile ));
-
-                        /* Чтение последнего кэша для файла */
-                        $MD5LastCache = file_exists( $CacheFile ) ? file_get_contents( $CacheFile ) : null;
-
-                        if( !$ACache || $MD5LastCache != $MD5Source )
-                        {
-                            if( $this -> correctnessFile( $AFile, $Source, $Path ))
-                            {
-                                /* Корректность проверенна */
-                                file_put_contents( $CacheFile, $MD5Source );
-                                $this -> getLog() -> text( '[+]', Console::ESC_INK_LIME );
-                                $Passed++;
-                                if( $OriginalSource != $Source )
-                                {
-                                    /* Запись файла */
-                                    file_put_contents( $AFile, $Source );
-                                }
-                            }
-                            else
-                            {
-                                /* Ошибка корректности */
-                                $this -> getLog() -> text( '[x]', Log::COLOR_ERROR );
-                                array_push( $Errors, $AFile );
-                            }
-                        }
-                        else
-                        {
-                            $this -> getLog() -> text( '[-]', Log::COLOR_INFO );
-                            $NoChanges++;
-                        }
-                    }
-                    else
-                    {
-                        /* Сообщение в лог при пропуске файла на основании включающих сключающих масок */
-                        $this -> getLog() -> text( '[s]',  Log::COLOR_INFO );
-                        $Skiped++;
-                    }
-                    $this -> getLog() -> param( 'File', $AFile );
-                }
-            );
-
-            if( count( $Errors) > 0 )
-            {
-                $this -> setResult( 'ErrorCorrectnessCheck', [ 'Count' => count( $Errors ) ] );
-            }
-
-            $this -> getLog()
-            -> paramLine( 'Skiped [s]'      , $Skiped )
-            -> paramLine( 'No changes [-]'  , $NoChanges )
-            -> paramLine( 'Passed [+]'      , $Passed )
-            -> paramLine( 'Error [X]'       , count( $Errors ) )
-            -> dump( $Errors, 'Errors' )
-            -> end();
-        }
-        return $this;
-    }
-
-
-
-    /*
-        Запуск cli на локальном или удаленном хосте
-        Используемые параметры деплоера:
-            REMOTE          Удаленный хост и пользователь для SSH подключения
-            REMOTE_SSL_KEY  файл ключ SSL для доступа через SSH
+        Execute CLI on local or remote host
+        Deployment parameters used:
+            REMOTE Remote host and user for SSH connection
+            REMOTE_SSL_KEY SSL key file for SSH access
     */
     public function shell
     (
-        /* Перечень командных линий для исполнения */
-        array   $ALines,
-        /* Удаленное исполнение */
-        bool    $ARemote        = false,
-        /* Коментарий исполнения */
-        string  $AComment       = '',
-        /* Код результата, который будет возвращен в любом случае */
-        string  $AResultCode    = ''
+        /* List of command lines to execute */
+        array   $aLines,
+        /* Remote execution flag */
+        bool    $aRemote        = false,
+        /* Execution comment */
+        string  $aComment       = '',
+        /* Result code that will be returned in any case */
+        string  $aResultCode    = ''
     )
     {
         if( $this -> isOk() )
         {
-            $Shell = Shell::Create( $this -> GetLog() );
+            $shell = Shell::create( $this -> GetLog() );
 
-            $Shell
+            $shell
             -> CmdBegin()
-            -> SetComment( $AComment )
+            -> SetComment( $aComment )
             ;
 
-            if( $ARemote )
+            if( $aRemote )
             {
-                $Shell
+                $shell
                 -> setConnection( $this -> prep( '%REMOTE%' ))
                 -> setPrivateKeyPath( $this -> getParam( 'REMOTE_SSL_KEY' ));
             }
 
-            /* Обрабатываем линии */
-            $Lines = [];
+            /* Line processing */
+            $lines = [];
             foreach( $ALines as $Line)
             {
-                array_push( $Lines, $this -> Prep( $Line ) );
+                $lines[] = $this -> prep( $line );
             }
 
-            $Shell
-            -> cmdAdd( implode( ' && ', $Lines) )
-            /* Запуск команды. Тестовый режим проверяется для удаленного
-            исполнителя и для локального */
-            -> cmdEnd( ' ', $ARemote ? ! $this -> isFull() : $this -> isTest() );
+            $shell
+            -> cmdAdd( implode( ' && ', $lines) )
+            /*
+                Command execution. Test mode is checked for both
+                remote executor and local execution.
+            */
+            -> cmdEnd
+            (
+                ' ',
+                $aRemote ? ! $this -> isFull() : $this -> isTest()
+            );
 
-            if( !empty( $AResultCode ))
+            if( !empty( $aResultCode ))
             {
-                $this -> setCode( $AResultCode );
+                $this -> setCode( $aResultCode );
             }
             else
             {
-                $Shell -> resultTo( $this );
+                $shell -> resultTo( $this );
             }
         }
         return $this;
@@ -1761,25 +1669,18 @@ class Cicd extends Payload
 
 
     /*
-        Проверка, включен ли тестовый режим в параметре Mode=Test.
+        Check if test mode is enabled via the parameter Mode=Test.
     */
     public function isTest()
     {
-        $Result = true;
-        switch( $this -> getMode() )
-        {
-            case self::MODE_FULL:
-            case self::MODE_BUILD:
-                $Result = false;
-            break;
-        }
-        return $Result;
+        $mode = $this -> getMode();
+        return $mode != self::MODE_FULL && $mode != self::MODE_BUILD;
     }
 
 
 
     /*
-        Проверка, включен ли полный режим режим в параметре mode=Full.
+        Check if full mode is enabled via the parameter mode=Full.
     */
     public function isFull()
     {
@@ -1790,7 +1691,7 @@ class Cicd extends Payload
 
 
     /*
-        Вывод параметров в лог
+        Output parameters to the log
     */
     public function dumpParams()
     {
@@ -1806,10 +1707,10 @@ class Cicd extends Payload
 
 
     /*
-        Возвращает строковое значение (ключи) перед каждым элементом массива
-        Пример:
-            KeyBeforeValue( ' -key ', [ 'asd', 'dfg', 'dfg' ] )
-            '-key asd -key dfg -key dfg'
+        Returns a string with the given key before each array element.
+        Example:
+            KeyBeforeValue(' -key ', ['asd', 'dfg', 'dfg'])
+            returns '-key asd -key dfg -key dfg'
     */
     static private function keyBeforeValue
     (
@@ -1821,9 +1722,8 @@ class Cicd extends Payload
     }
 
 
-
     /*
-        Пурификация - удаляем папки предыдущих билдов
+        Purification - removing folders of previous builds
     */
     public function purifyDestination()
     {
@@ -1834,45 +1734,7 @@ class Cicd extends Payload
 
 
     /*
-        Проверка файла на корректность
-    */
-    private function correctnessFile
-    (
-        string $AFile,          /* Файл */
-        string &$AContent,      /* Содержимое */
-        string $ARoot           /* Корень относительно которого проверяется */
-    )
-    {
-        $Result = true;
-        switch( pathinfo( $AFile, PATHINFO_EXTENSION ))
-        {
-            case 'php'  : $Result = $this -> correctnessPHP( $AFile, $AContent, $ARoot ); break;
-        }
-        return $Result;
-    }
-
-
-
-    /*
-        Проверка корректности PHP файла
-        Выполняется проверка синтаксиса
-    */
-    private function correctnessPHP
-    (
-        string $AFile
-    )
-    {
-        return Shell::Create()
-        -> cmdAdd( 'php -l ' )
-        -> fileAdd( $AFile )
-        -> cmdEnd()
-        -> isOk();
-    }
-
-
-
-    /*
-        Вывод информации в консоль
+        Output information to the console
     */
     public function info
     (
@@ -1893,14 +1755,14 @@ class Cicd extends Payload
     /**************************************************************************
         Fob
 
-        Файл специфических настроек, содеражщий пароли и иные чувствительные
-        данные. Файл должен лежать отдельно от проекта и подключаятся при сборке
-        путем установки аргумента %FOB_FILE%
+        File with specific settings containing passwords and other sensitive
+        data. The file should be kept separate from the project and included
+        during the build process by setting the %FOB_FILE% argument.
     */
 
     public function activateFob
     (
-        string $aValue
+        string $a
     )
     {
         $json = json_decode
@@ -1910,7 +1772,7 @@ class Cicd extends Payload
 
         $this -> activeFob = clValueFromObject
         (
-            empty( $json ) ? [] : $json, $aValue, []
+            empty( $json ) ? [] : $json, $a, []
         );
 
         if( empty( $this -> activeFob ))
@@ -1928,12 +1790,7 @@ class Cicd extends Payload
     */
     public function getActiveFob()
     {
-        return $this -> ActiveFob;
-    }
-
-        public function getMode()
-    {
-        return $this -> Mode;
+        return $this -> activeFob;
     }
 
 
@@ -1955,6 +1812,13 @@ class Cicd extends Payload
 
 
 
+    public function getMode()
+    {
+        return $this -> Mode;
+    }
+
+
+
     /*
         SSH connection settings for the target host used for deployment.
         Attributes are used in the following methods"
@@ -1969,12 +1833,12 @@ class Cicd extends Payload
     {
         return $this -> AddParam
         ([
-            /* Логин для ssh доступа к целевому хосут */
+            /* SSH login for access to the target host */
             'REMOTE_USER'   => $aUser,
-            /* Адрес целевого хоста, в данном случае выкатываем на локалхост */
+            /* Address of the target host, in this case deploying to localhost */
             'REMOTE_HOST'   => $aHost,
-            /* Порт целевого хоста */
-            'ROMOTE_PORT'   => $aPort
+            /* Port of the target host */
+            'REMOTE_PORT'   => $aPort
         ]);
     }
 }
