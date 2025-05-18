@@ -1,4 +1,4 @@
-# Библиотека CICD
+# CICD
 
-1. Библиотека сборщика содержит набор методов для сборки и деплоймента.
-0. Сборщик построен на основе ползеной нагрузки Payload.
+1. The build library provides a set of methods for building and deployment.
+0. The builder is implemented based on the Payload utility.

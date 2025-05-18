@@ -1,5 +1,25 @@
 <?php
 /*
+    Catlair PHP Copyright (C) 2021 https://itserv.ru
+
+    This program (or part of program) is free software: you can redistribute
+    it and/or modify it under the terms of the GNU Aferro General
+    Public License as published by the Free Software Foundation,
+    either version 3 of the License, or (at your option) any later version.
+
+    This program (or part of program) is distributed in the hope that
+    it will be useful, but WITHOUT ANY WARRANTY; without even the implied
+    warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+    See the GNU Aferro General Public License for more details.
+    You should have received a copy of the GNU Aferror General Public License
+    along with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
+/*
+    Refactoring from pusa.dev https://gitlab.com/catlair/pusa/-/tree/main
+*/
+
+/*
     CICD functionality module
     Includes:
         - working with GIT
@@ -21,13 +41,14 @@ require_once LIB . '/core/shell.php';
 require_once LIB . '/core/utils.php';
 require_once LIB . '/core/http.php';
 require_once LIB . '/core/moment.php';
+require_once LIB . '/app/hub.php';
 
 
 
 /*
     Cici class
 */
-class Cicd extends Hub
+class Deployer extends Hub
 {
     /*
         Modes
@@ -40,77 +61,88 @@ class Cicd extends Hub
     const MODE_FULL     = 'full';
 
 
+    /*
+        Type job
+    */
+    const JOB_CI = 'ci';
+    const JOB_CD = 'cd';
+
 
     /* Default paremeters */
     const DEFAULT_PARAMS =
     [
         /*
-            Set aliases
+            Parameters
         */
+        /* Ci begin moment */
+        'ci-moment'             => '',
+        /* Cd begin moment */
+        'cd-moment'             => '',
+        /* Define build path */
+        'build'                 => '%root%/build'
 
-        /* Path to the shared file list */
-        'FILES'                 => '%SOURCE%/files',
-        /* Путь до папки с шаблонами */
-        'TEMPLATES'             => '%SOURCE%/templates',
-
-        /*
-            Local sources
-        */
-        /* folder with source paths for container creation */
-        'SOURCE'                => '%TASK_PATH%/deploy/source',
-        /* source for root formation */
-        'IMAGE'                 => '%SOURCE%/image',
-        /* path to the task files list */
-        'FILES_TASK'            => '%SOURCE%/files',
-        'SOURCE_PROJECT'        => '%SOURCE%/project',
-
-        /*
-            Направления локальные
-        */
-
-        /* путь до кэша */
-        'CACHE'                 => '%TASK_PATH%/deploy/cache',
-        /* кэш стабильности файла */
-        'CACHE_STABLE'          => '%CACHE%/stable',
-        /* папка в которой собирается задача */
-        'DEST'                  => '%TASK_PATH%/deploy/dest',
-        /* временная папка для задачи */
-        'TMP'                   => '%DEST%/tmp',
-        /* папка для билда проекта. в этой папке содержится собранный проект*/
-        'BUILD'                 => '%DEST%/image',
-        /* папка для экспорта образов контейнеров */
-        'IMAGES'                => '%DEST%/images',
-        /* папка в которой будет размещен продукт в локальной сборке */
-        'LOCAL_PROJECT'         => '%BUILD%/%REMOTE_PROJECT%',
-        'REMOTE_PROJECT_APP'    => '%REMOTE_PROJECT%/app',
-        /* файл версии */
-        'VERSION_FILE'          => '%TASK_PATH%/version.json',
-
-        /*
-            Направления удаленные
-        */
-
-        /* подключение к удаленному хосту */
-        'REMOTE'                => '%REMOTE_USER%@%REMOTE_HOST%',
-        /* путь на удаленном хосте где будет выполнена распаковка файла контейнера */
-        'REMOTE_IMAGES'         => '/tmp/deployer/images',
-
-        /*
-            Параметры
-        */
-        'DeployMoment'          => '',
-        /* имя образа файла докера с текущей версией. Заполняется при каждом Prep */
-        'IMAGE_FILE_CURRENT'    => 'UNDEFINED'
+//        /*
+//            Set aliases
+//        */
+//
+//        /* Path to the shared file list */
+//        'FILES'                 => '%SOURCE%/files',
+//        /* Путь до папки с шаблонами */
+//        'TEMPLATES'             => '%SOURCE%/templates',
+//
+//        /*
+//            Local sources
+//        */
+//        /* folder with source paths for container creation */
+//        'SOURCE'                => '%ROOT%/deploy/source',
+//        /* source for root formation */
+//        'IMAGE'                 => '%SOURCE%/image',
+//        /* path to the task files list */
+//        'FILES_TASK'            => '%SOURCE%/files',
+//        'SOURCE_PROJECT'        => '%SOURCE%/project',
+//
+//        /*
+//            Направления локальные
+//        */
+//
+//        /* путь до кэша */
+//        'CACHE'                 => '%ROOT%/deploy/cache',
+//        /* кэш стабильности файла */
+//        'CACHE_STABLE'          => '%CACHE%/stable',
+//        /* папка в которой собирается задача */
+//        'DEST'                  => '%ROOT%/deploy/dest',
+//        /* временная папка для задачи */
+//        'TMP'                   => '%DEST%/tmp',
+//        /* папка для билда проекта. в этой папке содержится собранный проект*/
+//        'BUILD'                 => '%DEST%/image',
+//        /* папка для экспорта образов контейнеров */
+//        'IMAGES'                => '%DEST%/images',
+//        /* папка в которой будет размещен продукт в локальной сборке */
+//        'LOCAL_PROJECT'         => '%BUILD%/%REMOTE_PROJECT%',
+//        'REMOTE_PROJECT_APP'    => '%REMOTE_PROJECT%/app',
+//        /* файл версии */
+//        'VERSION_FILE'          => '%ROOT%/version.json',
+//
+//        /*
+//            Направления удаленные
+//        */
+//
+//        /* подключение к удаленному хосту */
+//        'REMOTE'                => '%REMOTE_USER%@%REMOTE_HOST%',
+//        /* путь на удаленном хосте где будет выполнена распаковка файла контейнера */
+//        'REMOTE_IMAGES'         => '/tmp/deployer/images',
+//
+//        /* имя образа файла докера с текущей версией. Заполняется при каждом Prep */
+//        'IMAGE_FILE_CURRENT'    => 'UNDEFINED'
     ];
 
-    /* List of files removed by the gitPurge command */
-    private $gitPurgeList =
+    const GIT_FILES =
     [
         '.git',
         '.gitignore',
-        'README.md',
-        'push'
+        'README.md'
     ];
+
 
     /* Current mode */
     private $Mode       = self::MODE_TEST;
@@ -122,8 +154,10 @@ class Cicd extends Hub
     /**************************************************************************
         Build preparation must be invoked before execution
     */
-    public function prepare
+    public function begin
     (
+        string $aJob,
+        string $aMode,
         string $aRoot = null
     )
     {
@@ -133,16 +167,40 @@ class Cicd extends Hub
         /* Adding dynamic parameters */
         -> addParams
         ([
+
             /* Path to the current task */
-            'TASK_PATH' =>
-            $ARoot == null ? $_SERVER[ 'PWD' ] : $ARoot,
+            'root' => empty( $aRoot ) ? ROOT : $aRoot,
+
             /* Key fob file with security parameters */
-            'FOB_FILE' =>
+            'fob-file' =>
             clValueFromObject( $_SERVER, 'HOME' ) . '/fob.json',
-            /* Build start moment */
-            'CI_MOMENT' =>
-            Moment::Create() -> now() -> toStringODBC()
-        ]);
+
+            /* List of files exclude for gitSync and gitPurge */
+            'git-exclude' => self::GIT_FILES
+        ])
+        /* Set mode */
+        -> setMode( $aMode );
+
+        switch( $aJob )
+        {
+            case self::JOB_CI:
+                /* Build start moment */
+                $this -> setParam
+                (
+                    'ci-moment',
+                    Moment::Create() -> now() -> toStringODBC()
+                );
+            break;
+            case self::JOB_CD:
+                /* Build start moment */
+                $this -> setParam
+                (
+                    'cd-moment',
+                    Moment::Create() -> now() -> toStringODBC()
+                );
+            break;
+        }
+
         return $this;
     }
 
@@ -210,45 +268,6 @@ class Cicd extends Hub
         return $this;
     }
 
-
-
-    /*
-        Clones a repository into the specified folder and removes git files
-        Uses gitClone and gitPurge
-    */
-    public function gitSync
-    (
-        /* Source repository URL to clone from */
-        string  $aSource,
-        /* Destination file path for copying */
-        string  $aDestination,
-        /* List of exclusions */
-        array   $aExclude       = [],
-        /* Optional branch to clone */
-        string  $aBranch        = '',
-        /* Depth of git history for cloning */
-        string  $aDepth        = 1
-    )
-    {
-        /* Define temporary path */
-        $tmp = '%TMP%/' . clGUID();
-
-        return $this
-        /* Clone the repository into the temporary folder */
-        -> gitClone( $this -> prep( $aSource ), $tmp, $aBranch, $aDepth )
-        /* Remove git metadata files */
-        -> gitPurge( $tmp, 'Remove git structure' )
-        /* Копирование в локальную папку проекта */
-        -> sync
-        (
-            $tmp,
-            $aDestination,
-            $aExclude,
-            true,
-            'Copy sources to build',
-            $this -> IsTest()
-        );
-    }
 
 
     /*
@@ -386,18 +405,18 @@ class Cicd extends Hub
     /*
         Clones the repository or pulls if it already exists
     */
-    public function gitCloneOrPull
+    public function gitUse
     (
-        /* Repository source for cloning */
-        string $aSource,
-        /* Destination path for cloning */
-        string $aDest,
-        /* Optional branch for cloning */
-        string $aBranch     = '',
         /* Optional comment for cloning log */
-        string $aComment    = '',
+        string  $aComment,
+        /* Repository source for cloning */
+        string  $aSource,
+        /* Destination path for cloning */
+        string  $aDest,
+        /* Optional branch for cloning */
+        string  $aBranch     = '',
         /* Git history depth */
-        string $aDepth = 1
+        int     $aDepth      = 1
     )
     {
         if( file_exists( $this -> prep( $aDest . '/.git' )))
@@ -507,6 +526,8 @@ class Cicd extends Hub
     */
     public function sync
     (
+        /* comment for output during command execution */
+        string $aComment = '',
         /* file path source for copying */
         string $aSource,
         /* file path destination for copying */
@@ -514,11 +535,7 @@ class Cicd extends Hub
         /* array of string masks to exclude during copying */
         array $aExcludes = [],
         /* allow deletion of files in destination that are not present in source */
-        bool $aDelete = false,
-        /* comment for output during command execution */
-        string $aComment = '',
-        /* run in test mode */
-        bool $aIsTest = true
+        bool $aDelete = true
     )
     {
         if( $this -> isOk() )
@@ -527,7 +544,7 @@ class Cicd extends Hub
 
             /* Конверсия путей в полные */
             $source = $this -> Prep( $aSource );
-            $source = $Source . ( is_dir( $source ) ? '/' : '' );
+            $source .= ( is_dir( $source ) ? '/' : '' );
             $destination = $this -> Prep( $aDestination );
 
             $this -> GetLog()
@@ -554,11 +571,10 @@ class Cicd extends Hub
                 {
                     foreach( $aExcludes as $exclude )
                     {
-                        $shell -> CmdAdd
+                        $shell -> longAdd
                         (
-                            '--exclude "' .
-                            $this -> prep( $exclude ) .
-                            '" '
+                            'exclude',
+                            $this -> prep( $exclude )
                         );
                     }
                 }
@@ -568,10 +584,10 @@ class Cicd extends Hub
                     $shell -> cmdAdd( '--delete' );
                 }
 
-                $Shell
+                $shell
                 -> fileAdd( $source )
                 -> fileAdd( $destination )
-                -> cmdEnd( ' ', $aIsTest )
+                -> cmdEnd( ' ', $this -> isTest() )
                 -> resultTo( $this );
             }
             $this -> getLog() -> end();
@@ -665,7 +681,7 @@ class Cicd extends Hub
     public function checkPath
     (
         /* File path to create */
-        string $APath
+        string $aPath
     )
     {
         if( $this -> isOk())
@@ -675,16 +691,16 @@ class Cicd extends Hub
             //
             $cmd = $this -> parseCLI( $path );
 
-            if( $Cmd[ 'Remote' ])
+            if( $cmd[ 'Remote' ])
             {
                 /*
                     Executes folder creation on a remote host
                     without checking the result
                 */
                 Shell::create( $this -> getLog() )
-                -> setConnection( $Cmd[ 'Connection' ] )
-                -> setPrivateKeyPath( $this -> getParam( 'REMOTE_SSL_KEY' ))
-                -> cmd( 'mkdir -p ' . $Cmd[ 'Path' ], ! $this -> IsFull() )
+                -> setConnection( $cmd[ 'Connection' ] )
+                -> setPrivateKeyPath( $this -> getParam( 'remote-ssl-key' ))
+                -> cmd( 'mkdir -p ' . $cmd[ 'Path' ], ! $this -> isFull() )
                 -> getResult();
             }
             else
@@ -696,13 +712,13 @@ class Cicd extends Hub
                 if
                 (
                     !$this -> isTest() &&
-                    !clCheckPath( $this -> prep( $APath ))
+                    !clCheckPath( $this -> prep( $aPath ))
                 )
                 {
                     $this -> setResult
                     (
                         'DirectoryCheckError',
-                        [ 'Path' => $APath ]
+                        [ 'Path' => $aPath ]
                     );
                 }
             }
@@ -1060,7 +1076,7 @@ class Cicd extends Hub
             $Result =
             Shell::create( $this -> getLog() )
             -> setConnection( $ARemote ? $this -> prep( '%REMOTE%' ) : '' )
-            -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'REMOTE_SSL_KEY' ) : '' )
+            -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'remote-ssl-key' ) : '' )
             -> cmd( 'docker images ' . $ImageName, $this -> isTest() )
             -> getResult();
 
@@ -1081,7 +1097,7 @@ class Cicd extends Hub
                         $ImageForDelete = $this -> getImageName( $Version );
                         Shell::create( $this -> getLog())
                         -> setConnection( $ARemote ? $this -> prep( '%REMOTE%' ) : '' )
-                        -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'REMOTE_SSL_KEY' ) : '' )
+                        -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'remote-ssl-key' ) : '' )
                         -> setComment( 'Purge image on remote host' )
                         -> cmd( 'docker rmi -f ' . $ImageForDelete, !$this -> isFull() );
                     }
@@ -1605,7 +1621,7 @@ class Cicd extends Hub
         Execute CLI on local or remote host
         Deployment parameters used:
             REMOTE Remote host and user for SSH connection
-            REMOTE_SSL_KEY SSL key file for SSH access
+            remote-ssl-key SSL key file for SSH access
     */
     public function shell
     (
@@ -1632,7 +1648,7 @@ class Cicd extends Hub
             {
                 $shell
                 -> setConnection( $this -> prep( '%REMOTE%' ))
-                -> setPrivateKeyPath( $this -> getParam( 'REMOTE_SSL_KEY' ));
+                -> setPrivateKeyPath( $this -> getParam( 'remote-ssl-key' ));
             }
 
             /* Line processing */
