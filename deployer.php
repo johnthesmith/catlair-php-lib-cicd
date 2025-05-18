@@ -75,16 +75,16 @@ class Deployer extends Hub
             Parameters
         */
         /* Ci begin moment */
-        'ci-moment'             => '',
+        'ci-moment'     => '',
         /* Cd begin moment */
-        'cd-moment'             => '',
+        'cd-moment'     => '',
         /* Define build path */
-        'build'                 => '%root%/build'
+        'build'         => '%root%/rw/build',
+        /* Source folder for main repository */
+        'source'        => '%build%/source',
+        /* Processing with main repository*/
+        'processing'    => '%build%/processing'
 
-//        /*
-//            Set aliases
-//        */
-//
 //        /* Path to the shared file list */
 //        'FILES'                 => '%SOURCE%/files',
 //        /* Путь до папки с шаблонами */
@@ -136,6 +136,10 @@ class Deployer extends Hub
 //        'IMAGE_FILE_CURRENT'    => 'UNDEFINED'
     ];
 
+
+    /*
+        Git files
+    */
     const GIT_FILES =
     [
         '.git',
@@ -144,8 +148,9 @@ class Deployer extends Hub
     ];
 
 
+
     /* Current mode */
-    private $Mode       = self::MODE_TEST;
+    private $mode       = self::MODE_TEST;
     /* Current fon (empty) */
     private $activeFob  = [];
 
@@ -543,9 +548,9 @@ class Deployer extends Hub
             $this -> GetLog() -> Begin( 'Syncronize' ) -> Text( ' ' . $aComment );
 
             /* Конверсия путей в полные */
-            $source = $this -> Prep( $aSource );
+            $source = $this -> prep( $aSource );
             $source .= ( is_dir( $source ) ? '/' : '' );
-            $destination = $this -> Prep( $aDestination );
+            $destination = $this -> prep( $aDestination );
 
             $this -> GetLog()
             -> Trace() -> Param( 'Source', $source )
@@ -688,7 +693,6 @@ class Deployer extends Hub
         {
             /* Prepare path */
             $path = $this -> prep( $aPath );
-            //
             $cmd = $this -> parseCLI( $path );
 
             if( $cmd[ 'Remote' ])
@@ -787,7 +791,10 @@ class Deployer extends Hub
             (
                 $this -> prep
                 (
-                    'docker login %Host% --username %Login% --password-stdin < %PasswordFile%'
+                    'docker login %Host% '.
+                    '--username %Login% '.
+                    '--password-stdin '.
+                    '< %PasswordFile%'
                 ),
                 $this -> isTest()
             )
@@ -815,13 +822,13 @@ class Deployer extends Hub
             $Shell = Shell::create( $this -> GetLog() )
             -> setComment( 'Build the docker image' )
             -> cmdBegin()
-            -> cmdAdd( 'cd "' . $this -> Prep( '%BUILD%' ) . '";' )
+            -> cmdAdd( 'cd "' . $this -> prep( '%BUILD%' ) . '";' )
             -> cmdAdd
             (
                 'docker build -t ' .
                 $this -> GetImageBuild( +1 ) .
                 ' -f ' .
-                $this -> Prep( '%BUILD%/Dockerfile' ) .
+                $this -> prep( '%BUILD%/Dockerfile' ) .
                 ' . '
             )
             -> cmdEnd( ' ', $this -> isTest() )
@@ -830,10 +837,17 @@ class Deployer extends Hub
             /* Set container id if building success */
             if( $this -> isOk() && !$this -> isTest() )
             {
-                $this -> ImageID = $Shell -> getResultByKey( 'Successfully built' );
+                $this -> ImageID =  $Shell -> getResultByKey
+                (
+                    'Successfully built'
+                );
                 if( empty( $this -> ImageID ))
                 {
-                    $this -> setResult( 'IDImageNotFound', $this -> GetImageBuild( +1 ));
+                    $this -> setResult
+                    (
+                        'IDImageNotFound',
+                        $this -> GetImageBuild( +1 )
+                    );
                 }
                 else
                 {
@@ -955,9 +969,6 @@ class Deployer extends Hub
 
 
 
-    /*
-        Деплой docker контейнера на удаленный хост в соответсвии с настройкамми
-    */
     public function imageRunLine()
     {
         if( $this -> isOk() )
@@ -1294,7 +1305,7 @@ class Deployer extends Hub
     */
     public function getVersionFile()
     {
-        return $this -> Prep( '%VERSION_FILE%' );
+        return $this -> prep( '%VERSION_FILE%' );
     }
 
 
@@ -1448,7 +1459,7 @@ class Deployer extends Hub
         string $AEnd    = '%'
     )
     {
-        return  clPrep
+        return clPrep
         (
             $ASource,
             $this -> getParams(),
@@ -1819,10 +1830,10 @@ class Deployer extends Hub
 
     public function setMode
     (
-        string $AMode
+        string $a
     )
     {
-        $this -> Mode = $AMode;
+        $this -> mode = $a;
         return $this;
     }
 
@@ -1830,7 +1841,7 @@ class Deployer extends Hub
 
     public function getMode()
     {
-        return $this -> Mode;
+        return $this -> mode;
     }
 
 
