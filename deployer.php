@@ -39,7 +39,6 @@ namespace catlair;
 */
 require_once LIB . '/core/shell.php';
 require_once LIB . '/core/utils.php';
-require_once LIB . '/core/http.php';
 require_once LIB . '/core/moment.php';
 require_once LIB . '/app/hub.php';
 
@@ -276,29 +275,63 @@ class Deployer extends Hub
 
 
     /*
-        Git pull
+        Git pure cleanup:
+        - hard reset of all changes
+        - delete untracked files and folders
     */
-    public function gitPull
+    public function gitPure
     (
-        /* Destination path for pulling */
-        string $aDest,
         /* Optional comment for logging */
-        string $aComment = ''
+        string $aComment = '',
+        /* Destination path to clean up */
+        string $aSource = '%build%/result'
     )
     {
         if( $this -> isOk())
         {
-            $dest = $this -> prep( $aDest );
-
-            /* Store current folder */
+            $source = $this -> prep( $aSource );
             $currentPath = getcwd();
-            /* Change current folder to $dest*/
-            chdir( $dest );
+            $this -> changeFolder( $source );
+
+            Shell::create( $this -> getLog() )
+            -> setComment( $aComment )
+            -> cmdBegin()
+            -> cmdAdd( 'git reset --hard' )
+            -> cmdAdd( '&&' )
+            -> cmdAdd( 'git clean -fdx' )
+            -> cmdEnd( ' ', $this -> isTest() )
+            -> resultTo( $this );
+
+            /* Restore current folder */
+            chdir( $currentPath );
+        }
+        return $this;
+    }
+
+
+
+    /*
+        Git pull
+    */
+    public function gitPull
+    (
+        /* Optional comment for logging */
+        string $aComment = '',
+        /* Destination path for pulling */
+        string $aSource = '%build%/result'
+    )
+    {
+        if( $this -> isOk())
+        {
+            $source = $this -> prep( $aSource );
+            $currentPath = getcwd();
+            $this -> changeFolder( $source );
 
             Shell::create( $this -> getLog() )
             -> setComment( $aComment )
             -> cmdBegin()
             -> cmdAdd( 'git pull' )
+            -> cmdAdd( '--rebase' )
             -> cmdEnd( ' ', $this -> isTest() )
             -> resultTo( $this );
             /* Restore current folder */
@@ -315,17 +348,16 @@ class Deployer extends Hub
     public function gitAdd
     (
         /* File path to the repository */
-        string $aSource,
+        string $aComment,
         /* Optional comment for logging */
-        string $aComment = ''
+        string $aSource = '%build%/result'
     )
     {
         if( $this -> isOk())
         {
             $source = $this -> prep( $aSource );
             $currentPath = getcwd();
-
-            changeFolder( $source );
+            $this -> changeFolder( $source );
 
             Shell::create( $this -> getLog() )
             -> setComment( $aComment )
@@ -345,25 +377,24 @@ class Deployer extends Hub
     */
     public function gitCommit
     (
-        /* File path source for pushing */
-        string $aSource,
-        /* Comment for commit */
-        string $aCommitComment = 'autocommit',
+        /* File path to the repository */
+        string $aComment,
         /* Optional comment for logging */
-        string $aComment = ''
+        string $aSource = '%build%/result',
+        /* Comment for commit */
+        string $aCommitComment = 'autocommit'
     )
     {
         if( $this -> isOk())
         {
             $source = $this -> prep( $aSource );
             $currentPath = getcwd();
-
-            changeFolder( $Source );
+            $this -> changeFolder( $source );
 
             Shell::create( $this -> getLog() )
             -> setComment( $aComment )
             -> cmdBegin()
-            -> cmdAdd( 'git commit -m ' . '"' . $aCommitComment . '"' )
+            -> cmdAdd( 'git diff --cached --quiet || git commit -m ' . '"' . $aCommitComment . '"' )
             -> cmdEnd( ' ', $this -> isTest() )
             -> resultTo( $this )
             ;
@@ -380,18 +411,17 @@ class Deployer extends Hub
     */
     public function gitPush
     (
-        /* File path source for pushing */
-        string $aSource,
+        /* File path to the repository */
+        string $aComment,
         /* Optional comment for logging */
-        string $aComment = ''
+        string $aSource = '%build%/result'
     )
     {
         if( $this -> isOk())
         {
             $source = $this -> prep( $aSource );
             $currentPath = getcwd();
-
-            changeFolder( $source );
+            $this -> changeFolder( $source );
 
             Shell::create( $this -> getLog() )
             -> setComment( $aComment )
@@ -409,6 +439,7 @@ class Deployer extends Hub
 
     /*
         Clones the repository or pulls if it already exists
+        Warning - all uncommited changes will be lost
     */
     public function gitUse
     (
@@ -426,7 +457,9 @@ class Deployer extends Hub
     {
         if( file_exists( $this -> prep( $aDest . '/.git' )))
         {
-            $this -> gitPull( $aDest, $aComment);
+            $this
+            -> gitPure( $aComment, $aDest )
+            -> gitPull( $aComment, $aDest );
         }
         else
         {
@@ -434,6 +467,31 @@ class Deployer extends Hub
         }
         return $this;
     }
+
+
+
+    /*
+        Upload git repo
+        add + commit + pull + push
+    */
+    public function gitUpload
+    (
+        /* Optional comment for cloning log */
+        string  $aComment,
+        /* Repository source for cloning */
+        string  $aSource = '%build%/result',
+        /* Comment for commit */
+        string  $aCommitComment = 'autocommit'
+    )
+    {
+        return $this
+        -> gitAdd( 'git add: ' . $aComment, $aSource )
+        -> gitCommit( 'git commit: ' . $aComment, $aSource, $aCommitComment )
+        -> gitPull( 'git pull: ' . $aComment, $aSource )
+        -> gitPush( 'git push: ' . $aComment, $aSource )
+        ;
+    }
+
 
 
 
@@ -540,7 +598,9 @@ class Deployer extends Hub
         /* array of string masks to exclude during copying */
         array $aExcludes = [],
         /* allow deletion of files in destination that are not present in source */
-        bool $aDelete = true
+        bool $aDelete = true,
+        /* allow deletion of files in destination that excluded */
+        bool $aDeleteExcluded = true
     )
     {
         if( $this -> isOk() )
@@ -587,6 +647,11 @@ class Deployer extends Hub
                 if( $aDelete )
                 {
                     $shell -> cmdAdd( '--delete' );
+                }
+
+                if( $aDeleteExcluded )
+                {
+                    $shell -> cmdAdd( '--delete-excluded' );
                 }
 
                 $shell
