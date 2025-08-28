@@ -438,6 +438,36 @@ class Deployer extends Hub
 
 
     /*
+        Git checkout to specific branch.
+        Force reset local branch from origin.
+    */
+    public function gitCheckout
+    (
+        /* Path to repo */
+        string $aPath,
+        /* Branch to checkout */
+        string $aBranch
+    )
+    {
+        $path = $this -> prep( $aPath );
+        $currentPath = getcwd();
+        $this -> changeFolder( $path );
+
+        Shell::create( $this -> getLog() )
+        -> cmdBegin()
+        -> cmdAdd( 'git fetch origin' )
+        -> cmdAdd( '&&' )
+        -> cmdAdd( 'git checkout -B ' . $aBranch . ' origin/' . $aBranch )
+        -> cmdEnd( ' ', $this -> isTest() )
+        -> resultTo( $this );
+
+        chdir( $currentPath );
+        return $this;
+    }
+
+
+
+    /*
         Clones the repository or pulls if it already exists
         Warning - all uncommited changes will be lost
     */
@@ -457,9 +487,15 @@ class Deployer extends Hub
     {
         if( file_exists( $this -> prep( $aDest . '/.git' )))
         {
-            $this
-            -> gitPure( $aComment, $aDest )
-            -> gitPull( $aComment, $aDest );
+            $this -> gitPure( $aComment, $aDest );
+            if( $aBranch )
+            {
+                $this -> gitCheckout( $aDest, $aBranch );
+            }
+            else
+            {
+                $this -> gitPull( $aComment, $aDest );
+            }
         }
         else
         {
