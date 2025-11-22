@@ -758,7 +758,7 @@ class Deployer extends Hub
     /*
         Copy folder
     */
-    public function copy
+    public function copyFolder
     (
         string $aSource,
         string $aDest,
