@@ -47,7 +47,7 @@ require_once LIB . '/app/hub.php';
 /*
     Cici class
 */
-class Deployer extends Hub
+class Cicd extends Hub
 {
     /*
         Modes
@@ -60,79 +60,19 @@ class Deployer extends Hub
     const MODE_FULL     = 'full';
 
 
-    /*
-        Type job
-    */
-    const JOB_CI = 'ci';
-    const JOB_CD = 'cd';
-
-
     /* Default paremeters */
     const DEFAULT_PARAMS =
     [
         /*
             Parameters
         */
-        /* Ci begin moment */
-        'ci-moment'     => '',
-        /* Cd begin moment */
-        'cd-moment'     => '',
+        'root'          => ROOT,
         /* Define build path */
-        'build'         => '%root%/rw/build',
+        'dest'          => '%root%/rw/private/dest',
         /* Source folder for main repository */
-        'source'        => '%build%/source',
-        /* Processing with main repository*/
-        'processing'    => '%build%/processing'
-
-//        /* Path to the shared file list */
-//        'FILES'                 => '%SOURCE%/files',
-//        /* Путь до папки с шаблонами */
-//        'TEMPLATES'             => '%SOURCE%/templates',
-//
-//        /*
-//            Local sources
-//        */
-//        /* folder with source paths for container creation */
-//        'SOURCE'                => '%ROOT%/deploy/source',
-//        /* source for root formation */
-//        'IMAGE'                 => '%SOURCE%/image',
-//        /* path to the task files list */
-//        'FILES_TASK'            => '%SOURCE%/files',
-//        'SOURCE_PROJECT'        => '%SOURCE%/project',
-//
-//        /*
-//            Направления локальные
-//        */
-//
-//        /* путь до кэша */
-//        'CACHE'                 => '%ROOT%/deploy/cache',
-//        /* кэш стабильности файла */
-//        'CACHE_STABLE'          => '%CACHE%/stable',
-//        /* папка в которой собирается задача */
-//        'DEST'                  => '%ROOT%/deploy/dest',
-//        /* временная папка для задачи */
-//        'TMP'                   => '%DEST%/tmp',
-//        /* папка для билда проекта. в этой папке содержится собранный проект*/
-//        'BUILD'                 => '%DEST%/image',
-//        /* папка для экспорта образов контейнеров */
-//        'IMAGES'                => '%DEST%/images',
-//        /* папка в которой будет размещен продукт в локальной сборке */
-//        'LOCAL_PROJECT'         => '%BUILD%/%REMOTE_PROJECT%',
-//        'REMOTE_PROJECT_APP'    => '%REMOTE_PROJECT%/app',
-//        /* файл версии */
-//        'VERSION_FILE'          => '%ROOT%/version.json',
-//
-//        /*
-//            Направления удаленные
-//        */
-//
-//        /* подключение к удаленному хосту */
-//        'REMOTE'                => '%REMOTE_USER%@%REMOTE_HOST%',
-//        /* путь на удаленном хосте где будет выполнена распаковка файла контейнера */
-//        'REMOTE_IMAGES'         => '/tmp/deployer/images',
-//
-//        /* имя образа файла докера с текущей версией. Заполняется при каждом Prep */
-//        'IMAGE_FILE_CURRENT'    => 'UNDEFINED'
+        'source'        => '%root%/ro/private/source',
+        /* Строка запуска докера */
+        'docker-run'    => 'docker run -itd --rm %ports% %folders%'
     ];
 
 
@@ -143,7 +83,10 @@ class Deployer extends Hub
     [
         '.git',
         '.gitignore',
-        'README.md'
+        'README.md',
+        'pull.sh',
+        'push.sh',
+        '*.md'
     ];
 
 
@@ -160,54 +103,40 @@ class Deployer extends Hub
     */
     public function begin
     (
-        string $aJob,
-        string $aMode,
-        string $aRoot = null
+        string $aMode
     )
     {
-        $this
+        $this -> mode = $aMode;
+
+        return $this
         /* Adding static default parameters */
-        -> addParams( self::DEFAULT_PARAMS )
+        -> addParams( self::DEFAULT_PARAMS, true )
         /* Adding dynamic parameters */
         -> addParams
-        ([
-
-            /* Path to the current task */
-            'root' => empty( $aRoot ) ? ROOT : $aRoot,
-
-            /* Key fob file with security parameters */
-            'fob-file' =>
-            clValueFromObject( $_SERVER, 'HOME' ) . '/fob.json',
-
-            /* List of files exclude for gitSync and gitPurge */
-            'git-exclude' => self::GIT_FILES
-        ])
-        /* Set mode */
-        -> setMode( $aMode );
-
-        switch( $aJob )
-        {
-            case self::JOB_CI:
-                /* Build start moment */
-                $this -> setParam
-                (
-                    'ci-moment',
-                    Moment::Create() -> now() -> toStringODBC()
-                );
-            break;
-            case self::JOB_CD:
-                /* Build start moment */
-                $this -> setParam
-                (
-                    'cd-moment',
-                    Moment::Create() -> now() -> toStringODBC()
-                );
-            break;
-        }
-
-        return $this;
+        (
+            [
+                /* Key fob file with security parameters */
+                'fob-file' =>
+                clValueFromObject( $_SERVER, 'HOME' ) . '/fob.json',
+                /* List of files exclude for gitSync and gitPurge */
+                'git-exclude' => self::GIT_FILES,
+                /* Получение версии */
+                'product-version' => $this -> versionToString( 1 )
+            ],
+            true
+        )
+        -> dumpParams()
+        ;
     }
 
+
+    public function ciNow()
+    {
+        return $this -> addParams
+        ([
+            'ci-moment' => Moment::Create() -> now() -> toStringODBC()
+        ]);
+    }
 
 
     /*************************************************************************
@@ -256,15 +185,15 @@ class Deployer extends Hub
     */
     public function gitPurge
     (
-        /* File path where deletion is performed */
-        string $aSource,
         /* Optional comment for logging */
-        string $aComment = ''
+        string $aComment = '',
+        /* File path where deletion is performed */
+        string $aSource
     )
     {
         if( $this -> isOk())
         {
-            foreach( $this -> gitPurgeList as $item )
+            foreach( $this -> getParam([ 'git-exclude' ], []) as $item )
             {
                 $this -> delete( $aSource . '/' . $item, 'Git purge' );
             }
@@ -702,6 +631,40 @@ class Deployer extends Hub
     }
 
 
+    /*
+        Recursive file copying
+    */
+    public function syncPack
+    (
+        /* comment for output during command execution */
+        string $aComment = '',
+        /* file path source for copying */
+        array $aSourceDestination,
+        /* array of string masks to exclude during copying */
+        array $aExcludes = [],
+        /* allow deletion of files in destination that are not present in source */
+        bool $aDelete = true,
+        /* allow deletion of files in destination that excluded */
+        bool $aDeleteExcluded = true
+    )
+    {
+        foreach( $aSourceDestination as $source => $dest )
+        {
+            $this -> sync
+            (
+                $aComment,
+                $source,
+                $dest,
+                $aExcludes,
+                $aDelete,
+                $aDeleteExcluded
+            );
+        }
+        return $this;
+    }
+
+
+
 
     /*
         Recurcive folders removeal
@@ -915,21 +878,21 @@ class Deployer extends Hub
         {
             $this -> getLog()
             -> begin( 'Image build' )
-            -> param( 'Current version', $this -> VersionToString( 0 ))
-            -> param( 'Next version', $this -> VersionToString( 1 ))
+            -> param( 'Current version', $this -> versionToString( 0 ))
+            -> param( 'Next version', $this -> versionToString( 1 ))
             ;
 
             /* Building container */
             $Shell = Shell::create( $this -> GetLog() )
             -> setComment( 'Build the docker image' )
             -> cmdBegin()
-            -> cmdAdd( 'cd "' . $this -> prep( '%BUILD%' ) . '";' )
+            -> cmdAdd( 'cd "' . $this -> prep( '%dest%' ) . '";' )
             -> cmdAdd
             (
-                'docker build -t ' .
-                $this -> GetImageBuild( +1 ) .
+                'DOCKER_BUILDKIT=0 docker build -t ' .
+                $this -> getImageBuild( +1 ) .
                 ' -f ' .
-                $this -> prep( '%BUILD%/Dockerfile' ) .
+                $this -> prep( '%dest%/Dockerfile' ) .
                 ' . '
             )
             -> cmdEnd( ' ', $this -> isTest() )
@@ -947,7 +910,7 @@ class Deployer extends Hub
                     $this -> setResult
                     (
                         'IDImageNotFound',
-                        $this -> GetImageBuild( +1 )
+                        $this -> getImageBuild( +1 )
                     );
                 }
                 else
@@ -1036,35 +999,53 @@ class Deployer extends Hub
     */
     public function imageRunCmd()
     {
-        return
-        $this -> prep
+        $result = $this -> prep
         (
-            'docker run -itd --rm' .
-            $this -> keyBeforeValue
+            implode
             (
-                ' -p ',
-                $this -> getParam( 'ContainerPorts', [] )) . ' ' .
-            (
+                ' ',
+                [
+                    $this -> prepParam( 'docker-run' ),
+                    $this -> keyBeforeValue
+                    (
+                        '--cap-add',
+                        $this -> getParam( 'remote-capabilities', [] )
+                    ),
+                    $this -> getImageBuild()
+                ]
+            )
+        );
+
+        $result = clPrep
+        (
+            $result,
+            [
+                'ports' => $this -> keyBeforeValue
                 (
-                    !empty( $this -> getParam( 'HostFolder', [] )) &&
-                    !empty( $this -> getParam( 'DockerFolder', [] ))
+                    '-p',
+                    $this -> getParam( 'container-ports', [] )
+                ),
+                'folders' =>
+                (
+                    !empty( $this -> getParam( 'host-folder', [] )) &&
+                    !empty( $this -> getParam( 'docker-folder', [] ))
                 )
                 ?
                 (
-                    ' -v "' . $this -> prep( $this -> getParam( 'HostFolder' )) . '"' .
-                    ':' .
-                    '"' . $this -> prep( $this -> getParam( 'DockerFolder' )) . '"'
+                    $this -> keyBeforeValue
+                    (
+                        '-v',
+                        '"' . $this -> getParam( 'HostFolder' ) . '"' .
+                        ':' .
+                        '"' . $this -> getParam( 'DockerFolder' ) . '"'
+                    )
                 )
                 :''
-            ) . ' ' .
-            $this -> keyBeforeValue
-            (
-                ' --cap-add ',
-                $this -> getParam( 'RemoteCapabilities', [] )
-            ) .
-            ' ' .
-            $this -> getImageBuild()
+            ]
         );
+
+        return $result;
+
     }
 
 
@@ -1140,7 +1121,12 @@ class Deployer extends Hub
             /* Остановка текущего докер образа на удаленном хосте */
             -> shell
             (
-                [ 'docker stop \$(docker ps | grep %ImageName% | awk \'{print \$1}\')' ],
+                [
+                    $this -> prep
+                    (
+                        'docker stop \$(docker ps | grep %image-name% | awk \'{print \$1}\')'
+                    )
+                ],
                 true,
                 'Stop docker container on remote',
                 Result::RC_OK
@@ -1154,7 +1140,7 @@ class Deployer extends Hub
             )
             ;
 
-            $FileRunContainer = $this -> prep( '%DEST%/container_run.sh' );
+            $FileRunContainer = $this -> prep( '%dest%/container_run.sh' );
             file_put_contents( $FileRunContainer, $RunCommand );
 
             $this
@@ -1172,44 +1158,47 @@ class Deployer extends Hub
     */
     public function imagePurge
     (
+        /* Комментарий при исполении */
+        string $aComment,
         /* Глубина версий на удаление */
         int $ADepth = 5,
         /* Выполнение на целевом инстансе */
-        bool $ARemote = false
+        bool $aRemote = false
     )
     {
         if( $this -> isOk() )
         {
             /* Получение версии и имени образа */
-            $ImageName = $this -> getParam( 'ImageName' );
+            $ImageName = $this -> prep( $this -> getParam( 'image-name' ));
             $CurrentVersion = $this -> versionRead();
 
             /* Сборка перечня имеющихся версий с целевого инстанса */
             $Result =
             Shell::create( $this -> getLog() )
-            -> setConnection( $ARemote ? $this -> prep( '%REMOTE%' ) : '' )
-            -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'remote-ssl-key' ) : '' )
+            -> setComment( $aComment )
+            -> setConnection( $aRemote ? $this -> prep( '%remote%' ) : '' )
+            -> setPrivateKeyPath( $aRemote ? $this -> getParam( 'remote-ssl-key' ) : '' )
             -> cmd( 'docker images ' . $ImageName, $this -> isTest() )
             -> getResult();
 
             /* Обход ответа перечня версий на предмет необходимости удаления */
             foreach( $Result  as $Line )
             {
-                $Lexemes = preg_split( '/ {2,}/', $Line );
-                if( count( $Lexemes ) > 2 && $Lexemes[ 0 ] == $ImageName )
+                $lexemes = preg_split( '/ {2,}/', $Line );
+                if( count( $lexemes ) > 2 && $lexemes[ 0 ] == $ImageName )
                 {
-                    $Version = $this -> stringToVersion( $Lexemes[ 1 ] );
+                    $version = $this -> stringToVersion( $lexemes[ 1 ] );
                     if
                     (
-                        !empty( $Version ) &&
-                        $Version[ 'Version' ] == $CurrentVersion[ 'Version' ] &&
-                        $Version[ 'Build' ] <= $CurrentVersion[ 'Build' ] - $ADepth
+                        !empty( $version ) &&
+                        $version[ 'Version' ] == $CurrentVersion[ 'Version' ] &&
+                        $version[ 'Build' ] <= $CurrentVersion[ 'Build' ] - $ADepth
                     )
                     {
-                        $ImageForDelete = $this -> getImageName( $Version );
+                        $ImageForDelete = $this -> getImageName( $version );
                         Shell::create( $this -> getLog())
-                        -> setConnection( $ARemote ? $this -> prep( '%REMOTE%' ) : '' )
-                        -> setPrivateKeyPath( $ARemote ? $this -> getParam( 'remote-ssl-key' ) : '' )
+                        -> setConnection( $aRemote ? $this -> prep( '%remote%' ) : '' )
+                        -> setPrivateKeyPath( $aRemote ? $this -> getParam( 'remote-ssl-key' ) : '' )
                         -> setComment( 'Purge image on remote host' )
                         -> cmd( 'docker rmi -f ' . $ImageForDelete, !$this -> isFull() );
                     }
@@ -1350,7 +1339,7 @@ class Deployer extends Hub
 
 
     /**************************************************************************
-        Version
+        Image version
     */
 
     /*
@@ -1364,7 +1353,7 @@ class Deployer extends Hub
     )
     {
         return
-        $this -> getParam( 'ImageName' ) .
+        $this -> prep( $this -> getParam( 'image-name' )).
         ':' .
         $this -> versionToString( $aShift );
     }
@@ -1381,7 +1370,7 @@ class Deployer extends Hub
     )
     {
         return
-        $this -> getParam( 'ImageName' ) .
+        $this -> prep( $this -> getParam( 'image-name' )) .
         ':' .
         clValueFromObject( $aVersion, 'Version', 'alpha' ) .
         '.' .
@@ -1406,7 +1395,7 @@ class Deployer extends Hub
     */
     public function getVersionFile()
     {
-        return $this -> prep( '%VERSION_FILE%' );
+        return $this -> prep( '%version-file%' );
     }
 
 
@@ -1570,6 +1559,16 @@ class Deployer extends Hub
         );
     }
 
+
+
+    public function prepParam
+    (
+        string $aParam
+    )
+    :string
+    {
+        return clPrep( $this -> getParam( $aParam ), $this -> getParams());
+    }
 
 
     /*
@@ -1759,7 +1758,7 @@ class Deployer extends Hub
             if( $aRemote )
             {
                 $shell
-                -> setConnection( $this -> prep( '%REMOTE%' ))
+                -> setConnection( $this -> prep( '%remote%' ))
                 -> setPrivateKeyPath( $this -> getParam( 'remote-ssl-key' ));
             }
 
@@ -1842,12 +1841,17 @@ class Deployer extends Hub
     */
     static private function keyBeforeValue
     (
-        string  $AKey,          /* Ключ */
-        array   $AArray = []    /* Массив значений */
+        string  $aKey,          /* Ключ */
+        array   $aArray = [],   /* Массив значений */
+        string  $aQuote = ''
     )
     {
-        return empty( $AArray ) ? '' : $AKey . implode( $AKey, $AArray );
+        return empty( $aArray )
+        ? ''
+        : $aKey . ' ' . $aQuote . implode( $aKey, $aArray ) . $aQuote
+        ;
     }
+
 
 
     /*
@@ -1856,7 +1860,7 @@ class Deployer extends Hub
     public function purifyDestination()
     {
         return
-        $this -> delete( '%DEST%', 'Remove destination folder' );
+        $this -> delete( '%dest%', 'Remove destination folder' );
     }
 
 
@@ -1895,7 +1899,7 @@ class Deployer extends Hub
     {
         $json = json_decode
         (
-            file_get_contents( $this -> prep( '%FOB_FILE%' ) )
+            file_get_contents( $this -> prep( '%fob-file%' ) )
         );
 
         $this -> activeFob = clValueFromObject

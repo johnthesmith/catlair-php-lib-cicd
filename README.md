@@ -9,7 +9,7 @@
 ```mermaid
 classDiagram
     
-    class Deployer {
+    class Cicd {
         +ci
         +cd
     }
@@ -23,6 +23,6 @@ classDiagram
         +mutations
     }
 
-    Deployer --> Hub : extends
+    Cicd --> Hub : extends
     Hub --> Payload : extends
 ```
