@@ -59,21 +59,27 @@ class Cicd extends Hub
     /* Full build and deployment of the image to the target instance */
     const MODE_FULL     = 'full';
 
-
     /* Default paremeters */
     const DEFAULT_PARAMS =
     [
         /*
             Parameters
         */
-        'root'          => ROOT,
+        'root'              => ROOT,
         /* Define build path */
-        'dest'          => '%root%/rw/private/dest',
+        'dest'              => '%root%/rw/private/dest',
         /* Source folder for main repository */
-        'source'        => '%root%/ro/private/source',
+        'source'            => '%root%/ro/private/source',
         /* Строка запуска докера */
-        'docker-run'    => 'docker run -itd --rm %ports% %folders%'
+        'docker-run'        => 'docker run -itd --rm --name=%project%-%instance% %ports% %volumes% %running-image%',
+        /* Строка остановки докера, если не запущен ошибки нет */
+        'docker-stop'       => 'docker ps -q --filter name=%project%-%instance% | xargs -r docker stop --time=1',
+        /* Строка сборки поротов для запуска контейнера */
+        'docker-run-ports'  => '%port-%project%-%instance%%:%port-http%',
+        /* Volums */
+        'docker-volumes'    => []
     ];
+
 
 
     /*
@@ -115,6 +121,8 @@ class Cicd extends Hub
         -> addParams
         (
             [
+                /* Let current user */
+                'user' => get_current_user(),
                 /* Key fob file with security parameters */
                 'fob-file' =>
                 clValueFromObject( $_SERVER, 'HOME' ) . '/fob.json',
@@ -997,74 +1005,128 @@ class Cicd extends Hub
     /*
         Constructing the command to run the container
     */
-    public function imageRunCmd()
+    public function imageRunCmd
+    (
+        $aInstance
+    )
     {
-        $result = $this -> prep
+        $this -> setParam( 'container-ports', [ $this -> prep( '%docker-run-ports%' )]);
+        return $this -> prepParam
         (
-            implode
-            (
-                ' ',
-                [
-                    $this -> prepParam( 'docker-run' ),
-                    $this -> keyBeforeValue
-                    (
-                        '--cap-add',
-                        $this -> getParam( 'remote-capabilities', [] )
-                    ),
-                    $this -> getImageBuild()
-                ]
-            )
-        );
-
-        $result = clPrep
-        (
-            $result,
+            'docker-run',
             [
                 'ports' => $this -> keyBeforeValue
                 (
                     '-p',
                     $this -> getParam( 'container-ports', [] )
                 ),
-                'folders' =>
-                (
-                    !empty( $this -> getParam( 'host-folder', [] )) &&
-                    !empty( $this -> getParam( 'docker-folder', [] ))
-                )
-                ?
-                (
-                    $this -> keyBeforeValue
-                    (
-                        '-v',
-                        '"' . $this -> getParam( 'HostFolder' ) . '"' .
-                        ':' .
-                        '"' . $this -> getParam( 'DockerFolder' ) . '"'
-                    )
-                )
-                :''
+
+                'volumes' => $this -> buildDockerVolumes( $aInstance ),
+
+                'running-image' => $this -> getImageBuild(),
+
+                /* Указываем запускаемый инстанс */
+                'instance' => $aInstance
             ]
         );
-
-        return $result;
-
     }
 
 
 
 
-    public function imageRunLine()
+    public function imageRunLine
+    (
+        string $aInstances
+    )
     {
         if( $this -> isOk() )
         {
-            $this
-            -> getLog()
-            -> prn
-            (
-                $this -> imageRunCmd(),
-                'Docker run line'
-            );
+            $result = [];
+
+            $list = explode( ',', $aInstances );
+
+            /* Устанавливает порты для контецнера из списка*/
+            $this -> setParam( 'container-ports', [ $this -> prep( '%docker-run-ports%' )]);
+
+            foreach( $list as $instance )
+            {
+                $result[] = $this -> imageRunCmd( $instance );
+            }
+
+            $this -> getLog() -> prn( implode( ' && ', $result ));
         }
         return $this;
     }
+
+
+
+    /*
+        Остановка текущих инстансов докер образа
+    */
+    public function imageStop
+    (
+        string $aInstances
+    )
+    {
+        if( $this -> isOk() )
+        {
+            $this -> getLog() -> begin( 'Docker images stoping' );
+            $cmd = [];
+            $list = explode( ',', $aInstances );
+            foreach( $list as $instance )
+            {
+                $this -> shell
+                (
+                    [
+                        $this -> prepParam
+                        (
+                            'docker-stop',
+                            [
+                                'instance' => $instance
+                            ]
+                        )
+                    ],
+                    'Docker stop'
+                );
+            }
+            $this -> getLog() -> end();
+        }
+        return $this;
+    }
+
+
+
+    /*
+        Остановка текущих инстансов докер образа
+    */
+    public function imageStart
+    (
+        string $aInstances
+    )
+    {
+        if( $this -> isOk() )
+        {
+            $this -> getLog() -> begin( 'Docker images starting' );
+
+            $cmd = [];
+
+            $list = array_map('trim', explode( ',', $aInstances ));
+            foreach( $list as $instance )
+            {
+                $this -> shell
+                (
+                    [
+                        $this -> imageRunCmd( $instance )
+                    ],
+                    'Docker start'
+                );
+            }
+            $this -> getLog() -> end();
+        }
+        return $this;
+    }
+
+
 
 
 
@@ -1074,6 +1136,7 @@ class Cicd extends Hub
     */
     public function imageDeploy
     (
+        string $aInstances
     )
     {
         if( $this -> isOk() )
@@ -1106,7 +1169,6 @@ class Cicd extends Hub
                     'docker load ' .
                     '--input "%REMOTE_IMAGES%/%IMAGE_FILE_CURRENT%"'
                 ],
-                true,
                 'Import the container on remote system'
             )
 
@@ -1114,7 +1176,6 @@ class Cicd extends Hub
             -> shell
             (
                 [ 'rm %REMOTE_IMAGES%/%IMAGE_FILE_CURRENT%' ],
-                true,
                 'Remove docker file with image'
             )
 
@@ -1127,7 +1188,6 @@ class Cicd extends Hub
                         'docker stop \$(docker ps | grep %image-name% | awk \'{print \$1}\')'
                     )
                 ],
-                true,
                 'Stop docker container on remote',
                 Result::RC_OK
             )
@@ -1135,7 +1195,6 @@ class Cicd extends Hub
             -> shell
             (
                 [ $RunCommand ],
-                true,
                 'Run new container on remote'
             )
             ;
@@ -1169,7 +1228,7 @@ class Cicd extends Hub
         if( $this -> isOk() )
         {
             /* Получение версии и имени образа */
-            $ImageName = $this -> prep( $this -> getParam( 'image-name' ));
+            $ImageName = $this -> prepParam( 'image-name' );
             $CurrentVersion = $this -> versionRead();
 
             /* Сборка перечня имеющихся версий с целевого инстанса */
@@ -1353,7 +1412,7 @@ class Cicd extends Hub
     )
     {
         return
-        $this -> prep( $this -> getParam( 'image-name' )).
+        $this -> prepParam( 'image-name' ) .
         ':' .
         $this -> versionToString( $aShift );
     }
@@ -1370,7 +1429,7 @@ class Cicd extends Hub
     )
     {
         return
-        $this -> prep( $this -> getParam( 'image-name' )) .
+        $this -> prepParam( 'image-name' ) .
         ':' .
         clValueFromObject( $aVersion, 'Version', 'alpha' ) .
         '.' .
@@ -1540,35 +1599,40 @@ class Cicd extends Hub
     public function prep
     (
         /* Value for macro substitutions */
-        $ASource,
+        $aSource,
+        array $aExternal = [],
         /* List of keys to exclude from substitution, left unchanged */
-        array $AExclude = [],
-        /* Opening macro key. Only 1 character */
-        string $ABegin  = '%',
-        /* Closing macro key. Only 1 character */
-        string $AEnd    = '%'
+        array $aExclude = []
     )
     {
         return clPrep
         (
-            $ASource,
-            $this -> getParams(),
-            $AExclude,
-            $ABegin,
-            $AEnd
+            $aSource,
+            array_merge( $this -> getParams(), $aExternal ),
+            $aExclude
         );
     }
 
 
-
+    /*
+        ПОдготоваливает с автозаменами и возвращает параметр по имени
+    */
     public function prepParam
     (
-        string $aParam
+        string $aParam,
+        array $aExternal = [],
+        array $aExclude = []
     )
     :string
     {
-        return clPrep( $this -> getParam( $aParam ), $this -> getParams());
+        return (string) $this -> prep
+        (
+            $this -> getParam( $aParam ),
+            $aExternal,
+            $aExclude
+        );
     }
+
 
 
     /*
@@ -1662,7 +1726,7 @@ class Cicd extends Hub
 
                         /* Выполненеи подмен */
                         $Result = $this
-                        -> prep( $Source, $AExcludeKeys, '%', '%' );
+                        -> prep( $Source, [], $AExcludeKeys );
 
                         /* Проверка результата */
                         $MD5Source = md5( $Source );
@@ -1738,14 +1802,13 @@ class Cicd extends Hub
     (
         /* List of command lines to execute */
         array   $aLines,
-        /* Remote execution flag */
-        bool    $aRemote        = false,
         /* Execution comment */
         string  $aComment       = '',
         /* Result code that will be returned in any case */
         string  $aResultCode    = ''
     )
     {
+$aRemote=false;
         if( $this -> isOk() )
         {
             $shell = Shell::create( $this -> GetLog() );
@@ -1764,7 +1827,7 @@ class Cicd extends Hub
 
             /* Line processing */
             $lines = [];
-            foreach( $ALines as $Line)
+            foreach( $aLines as $line)
             {
                 $lines[] = $this -> prep( $line );
             }
@@ -1779,7 +1842,8 @@ class Cicd extends Hub
             (
                 ' ',
                 $aRemote ? ! $this -> isFull() : $this -> isTest()
-            );
+            )
+            ;
 
             if( !empty( $aResultCode ))
             {
@@ -1839,7 +1903,7 @@ class Cicd extends Hub
             KeyBeforeValue(' -key ', ['asd', 'dfg', 'dfg'])
             returns '-key asd -key dfg -key dfg'
     */
-    static private function keyBeforeValue
+    private function keyBeforeValue
     (
         string  $aKey,          /* Ключ */
         array   $aArray = [],   /* Массив значений */
@@ -1848,7 +1912,7 @@ class Cicd extends Hub
     {
         return empty( $aArray )
         ? ''
-        : $aKey . ' ' . $aQuote . implode( $aKey, $aArray ) . $aQuote
+        :  $aKey . ' ' . $aQuote . $this -> prep( implode( $aKey, $aArray )) . $aQuote
         ;
     }
 
@@ -1963,14 +2027,154 @@ class Cicd extends Hub
         string $aPort
     )
     {
-        return $this -> AddParam
+        return $this -> addParam
         ([
             /* SSH login for access to the target host */
-            'REMOTE_USER'   => $aUser,
+            'remote-user'   => $aUser,
             /* Address of the target host, in this case deploying to localhost */
-            'REMOTE_HOST'   => $aHost,
+            'remote-host'   => $aHost,
             /* Port of the target host */
-            'REMOTE_PORT'   => $aPort
+            'remote-port'   => $aPort
         ]);
     }
+
+
+
+    /*
+       Генерация файла из шаблона
+    */
+    public function genFile
+    (
+        /* Файл источник шаблона */
+        string $aSource,
+        /* Файл направление */
+        string $aDest,
+        /* Список инстансов 1,2,3,....*/
+        string $aInstances
+    )
+    :self
+    {
+        $instances = explode( ',', $aInstances );
+        foreach( $instances as $instance )
+        {
+            $instance = trim( $instance);
+            $dest = $this -> prep( $aDest, ['instance' => $instance ]);
+            $source = $this -> prep( $aSource, ['instance' => $instance ]);
+
+            if
+            (
+                clCheckPath( pathinfo( $dest, PATHINFO_DIRNAME ))
+                && file_exists( $source )
+            )
+            {
+                $content = (string) file_get_contents( $source );
+                $content = $this -> prep( $content, [ 'instance' => $instance ]);
+                if( !file_put_contents( $dest, $content ))
+                {
+                    $this -> setResult
+                    (
+                        'gen-file-write-error',
+                        [ 'dest' => $dest ]
+                    );
+                    break;
+                }
+            }
+            else
+            {
+                $this -> setResult
+                (
+                    'gen-file-check-path-error',
+                    [ 'dest' => $dest ]
+                );
+                break;
+            }
+        }
+        return $this;
+    }
+
+
+    /*
+        Создает список строк на основе шаблона и загружет его в ключ направления
+        в указанном количестве
+    */
+    public function buildList
+    (
+        string $aDest,
+        string $aTemplate,
+        string $aInstances,
+        string $aDelimiter = ','
+    )
+    {
+        $loop = explode( ',', $aInstances );
+        $template = $this -> prepParam( $aTemplate );
+        $result = [];
+
+        foreach( $loop as $instance )
+        {
+            $instance = trim( $instance );
+            $line = $this -> prep( $template, [ 'instance' => $instance ]);
+            $result[] = $this -> prep( '"'. $line . '"' );
+        }
+        $this -> setParam( $aDest, implode( $aDelimiter, $result )  );
+
+        return $this;
+    }
+
+
+
+    public function buildDockerVolumes
+    (
+        $aInstance
+    )
+    {
+        $result = [];
+        $volumes = $this -> getParam( 'docker-volumes', [] );
+
+        if( !is_array( $volumes ))
+        {
+            $volumes = [ $volumes ];
+        }
+
+        foreach( $volumes as $line )
+        {
+            $result[] = '-v';
+            $result[] = $this -> prep( $line, [ 'instance' => $aInstance ]);
+        }
+
+        return implode( ' ', $result );
+    }
+
+
+
+    /*
+        Синхронизирует пути для множетсва инстансов
+        Supports remote sync
+    */
+    public function syncInstances
+    (
+        /* Comment for operation */
+        string $aCaption,
+        /* List of instance 1,2,3,n....*/
+        string $aInstances,
+        /* Source path */
+        string $aSrc,
+        /* Destination path */
+        string $aDst
+    )
+    : self
+    {
+        $instances = array_map( 'trim', explode( ',', $aInstances ));
+        foreach( $instances as $instance )
+        {
+            $this -> sync
+            (
+                $aCaption,
+                $this -> prep( $aSrc, [ 'instance' => $instance ]),
+                $this -> prep( $aDst, [ 'instance' => $instance ])
+            );
+        }
+        return $this;
+    }
+
 }
+
