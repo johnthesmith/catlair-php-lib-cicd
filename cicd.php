@@ -74,8 +74,6 @@ class Cicd extends Hub
         'docker-run'        => 'docker run -itd --rm --name=%project%-%instance% %ports% %volumes% %running-image%',
         /* Строка остановки докера, если не запущен ошибки нет */
         'docker-stop'       => 'docker ps -q --filter name=%project%-%instance% | xargs -r docker stop --time=1',
-        /* Строка сборки поротов для запуска контейнера */
-        'docker-run-ports'  => '%port-%project%-%instance%%:%port-http%',
         /* Volums */
         'docker-volumes'    => []
     ];
@@ -1010,53 +1008,27 @@ class Cicd extends Hub
         $aInstance
     )
     {
-        $this -> setParam( 'container-ports', [ $this -> prep( '%docker-run-ports%' )]);
         return $this -> prepParam
         (
             'docker-run',
             [
                 'ports' => $this -> keyBeforeValue
                 (
-                    '-p',
-                    $this -> getParam( 'container-ports', [] )
+                    ' -p ',
+                    $this -> keyValueToValue
+                    (
+                        $this -> getParam( 'docker-ports', [] ),
+                        ':'
+                    )
                 ),
-
                 'volumes' => $this -> buildDockerVolumes( $aInstance ),
-
                 'running-image' => $this -> getImageBuild(),
-
                 /* Указываем запускаемый инстанс */
                 'instance' => $aInstance
             ]
         );
     }
 
-
-
-
-    public function imageRunLine
-    (
-        string $aInstances
-    )
-    {
-        if( $this -> isOk() )
-        {
-            $result = [];
-
-            $list = explode( ',', $aInstances );
-
-            /* Устанавливает порты для контецнера из списка*/
-            $this -> setParam( 'container-ports', [ $this -> prep( '%docker-run-ports%' )]);
-
-            foreach( $list as $instance )
-            {
-                $result[] = $this -> imageRunCmd( $instance );
-            }
-
-            $this -> getLog() -> prn( implode( ' && ', $result ));
-        }
-        return $this;
-    }
 
 
 
@@ -1905,15 +1877,20 @@ $aRemote=false;
     */
     private function keyBeforeValue
     (
-        string  $aKey,          /* Ключ */
-        array   $aArray = [],   /* Массив значений */
+        /* Ключ */
+        string  $aKey,
+        /* Массив значений */
+        array   $aArray = [],
+        /* Опциональные кавычки */
         string  $aQuote = ''
     )
     {
-        return empty( $aArray )
-        ? ''
-        :  $aKey . ' ' . $aQuote . $this -> prep( implode( $aKey, $aArray )) . $aQuote
-        ;
+        $result = [];
+        foreach( $aArray as $item )
+        {
+            $result[] = $aKey . $aQuote . $item . $aQuote;
+        }
+        return implode( '', $result );
     }
 
 
@@ -2122,6 +2099,31 @@ $aRemote=false;
 
 
 
+    /*
+        Создает список строк и размещает его в указанном ключе
+    */
+    public function buildValues
+    (
+        /* Ключ направление */
+        string $aDest,
+        /* Key value array */
+        array  $aArray,
+        /* Delimiter */
+        string $aDelimiter = ','
+    )
+    :self
+    {
+        $result = [];
+        foreach ( $aArray as $value )
+        {
+            $result[] = ( string ) $value;
+        }
+        $this -> setParam( $aDest, implode( $aDelimiter, $result ) );
+        return $this;
+    }
+
+
+
     public function buildDockerVolumes
     (
         $aInstance
@@ -2176,5 +2178,24 @@ $aRemote=false;
         return $this;
     }
 
+
+
+    /*
+        Convert key value array in to value
+    */
+    public function keyValueToValue
+    (
+        array $aArray,
+        string $aDelimiter = '='
+    )
+    : array
+    {
+        $result = [];
+        foreach( $aArray as $key => $value )
+        {
+            $result[] = $key . $aDelimiter . $value;
+        }
+        return $result;
+    }
 }
 
